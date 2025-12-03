@@ -7,7 +7,7 @@ A lightweight dependency injection toolkit with singleton, scoped, and transient
 - **ServiceCollection**: Register services with lifetimes.
 - **ServiceProvider**: Root container with singleton cache and scope creation.
 - **ServiceScope**: Per-request/per-operation scoped instances with disposal.
-- **Hono Helpers**: `createContainerMiddleware` to attach a scope to each request and `resolveFromContext` to fetch services.
+- **Hono Helpers**: `createContainerMiddleware` to attach a scope to each request, `resolveFromContext`/`tryResolveFromContext` to fetch services.
 - **Types**: `Token`, `ServiceDescriptor`, `ServiceLifetime`.
 
 ## Install
@@ -32,11 +32,17 @@ services.addScoped("RequestId", () => crypto.randomUUID());
 // Transient
 services.addTransient("Now", () => () => new Date());
 
+// Multiple/Keyed registrations
+services.addSingleton("Cache", () => primaryCache, { key: "primary", multiple: true });
+services.addSingleton("Cache", () => secondaryCache, { key: "secondary", multiple: true });
+
 const provider = services.build();
 const scope = provider.createScope();
 
 const config = scope.resolve<{ port: number }>("Config");
 const requestId = scope.resolve<string>("RequestId");
+const primary = scope.resolve("Cache", "primary");
+const caches = scope.resolveAll("Cache"); // [secondary, primary] (last wins unless keyed)
 
 // Optional resolution
 const maybeMissing = scope.tryResolve("Missing"); // undefined instead of throw

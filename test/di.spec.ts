@@ -59,6 +59,7 @@ describe("Resolution helpers", () => {
     const provider = services.build();
     expect(() => provider.resolve("Missing")).toThrow();
     expect(provider.tryResolve("Missing")).toBeUndefined();
+    expect(provider.resolveAll("Missing")).toEqual([]);
   });
 
   it("tryResolve returns undefined when scoped resolved from root", () => {
@@ -78,6 +79,51 @@ describe("Resolution helpers", () => {
     const services = new ServiceCollection().addScoped("Scoped", () => ({}));
     const provider = services.build();
     expect(() => provider.resolve("Scoped")).toThrow();
+  });
+
+  it("resolves multiple and keyed registrations", () => {
+    const services = new ServiceCollection()
+      .addTransient("Handler", () => "a", { multiple: true })
+      .addTransient("Handler", () => "b", { multiple: true, key: "b" })
+      .addTransient("Handler", () => "c", { multiple: true, key: "c" });
+
+    const provider = services.build();
+    expect(provider.resolveAll("Handler")).toEqual(["a", "b", "c"]);
+    expect(provider.resolve("Handler")).toBe("c"); // last wins without key
+    expect(provider.resolve("Handler", "b")).toBe("b");
+    expect(provider.tryResolve("Handler", "missing")).toBeUndefined();
+    expect(provider.getDescriptors("Handler")?.length).toBe(3);
+    expect(provider.getDescriptor("Handler")?.key).toBe("c");
+  });
+
+  it("supports multiple singleton registrations with keys", () => {
+    const services = new ServiceCollection()
+      .addSingleton("Repo", { name: "main" }, { multiple: true, key: "main" })
+      .addSingleton("Repo", { name: "shadow" }, { multiple: true, key: "shadow" });
+    const provider = services.build();
+    const main = provider.resolve<{ name: string }>("Repo", "main");
+    expect(main.name).toBe("main");
+    const names = provider.resolveAll<{ name: string }>("Repo").map((r) => r.name);
+    expect(names).toEqual(["main", "shadow"]);
+  });
+
+  it("resolveAll on scope returns [] when none and values when registered", () => {
+    const services = new ServiceCollection().addScoped("Scoped", () => "scoped");
+    const provider = services.build();
+    const scope = provider.createScope();
+    expect(scope.resolveAll("Missing")).toEqual([]);
+    expect(scope.resolveAll("Scoped")).toEqual(["scoped"]);
+    expect(scope.activeCount).toBe(1);
+  });
+
+  it("supports multiple scoped registrations", () => {
+    const services = new ServiceCollection()
+      .addScoped("Scoped", () => "one", { multiple: true })
+      .addScoped("Scoped", () => "two", { multiple: true, key: "two" });
+    const provider = services.build();
+    const scope = provider.createScope();
+    expect(scope.resolveAll("Scoped")).toEqual(["one", "two"]);
+    expect(scope.resolve("Scoped", "two")).toBe("two");
   });
 });
 
@@ -206,6 +252,7 @@ describe("Internals and guards", () => {
     const descriptor = provider.getDescriptor("Factory");
     expect(descriptor?.lifetime).toBe(ServiceLifetime.Singleton);
     expect(provider.resolve<{ n: number }>("Factory").n).toBe(1);
+    expect(provider.getDescriptors("Factory")?.length).toBe(1);
   });
 
   it("validates scoped descriptor in getOrCreate", () => {
@@ -213,7 +260,7 @@ describe("Internals and guards", () => {
     const provider = services.build();
     const scope = provider.createScope();
     const descriptor = provider.getDescriptor("X")!;
-    expect(() => scope.getOrCreate("X", descriptor as any)).toThrow();
+    expect(() => scope.getOrCreate(descriptor as any)).toThrow();
   });
 
   it("ignores repeated dispose calls on scope", async () => {
@@ -225,5 +272,13 @@ describe("Internals and guards", () => {
     scope.resolve("Item");
     await scope.dispose();
     await expect(scope.dispose()).resolves.toBeUndefined();
+  });
+
+  it("exposes service collection introspection", () => {
+    const services = new ServiceCollection()
+      .addSingleton("A", {})
+      .addTransient("B", () => ({}), { multiple: true });
+    expect(services.count).toBe(2);
+    expect(services.tokens).toContain("A");
   });
 });

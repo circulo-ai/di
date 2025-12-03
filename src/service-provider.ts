@@ -1,27 +1,46 @@
 import { ServiceLifetime } from "./lifetime";
-import type { MaybeDisposable, ServiceDescriptor, ServiceResolver, Token } from "./types";
+import type {
+  MaybeDisposable,
+  ServiceDescriptor,
+  ServiceKey,
+  ServiceResolver,
+  Token,
+} from "./types";
 import { ServiceScope } from "./service-scope";
 
 export class ServiceProvider implements ServiceResolver {
-  private readonly descriptors: Map<Token, ServiceDescriptor>;
-  private readonly singletons = new Map<Token, unknown>();
+  private readonly descriptors: Map<Token, ServiceDescriptor[]>;
+  private singletons = new WeakMap<ServiceDescriptor, unknown>();
+  private readonly singletonDescriptors = new Set<ServiceDescriptor>();
 
   constructor(descriptors: ServiceDescriptor[]) {
-    this.descriptors = new Map(descriptors.map((descriptor) => [descriptor.token, descriptor]));
+    const grouped = new Map<Token, ServiceDescriptor[]>();
+    descriptors.forEach((d) => {
+      const list = grouped.get(d.token) ?? [];
+      list.push(d);
+      grouped.set(d.token, list);
+    });
+    this.descriptors = grouped;
   }
 
-  resolve<T>(token: Token<T>): T {
-    return this.resolveInternal(token, null);
+  resolve<T>(token: Token<T>, key?: ServiceKey): T {
+    return this.resolveInternal(token, null, key);
   }
 
-  tryResolve<T>(token: Token<T>): T | undefined {
-    const descriptor = this.descriptors.get(token) as ServiceDescriptor<T> | undefined;
-    if (!descriptor) return undefined;
+  tryResolve<T>(token: Token<T>, key?: ServiceKey): T | undefined {
     try {
-      return this.resolveInternal(token, null);
+      return this.resolveInternal(token, null, key);
     } catch {
       return undefined;
     }
+  }
+
+  resolveAll<T>(token: Token<T>): T[] {
+    const descriptors = this.descriptors.get(token) as ServiceDescriptor<T>[] | undefined;
+    if (!descriptors?.length) {
+      return [];
+    }
+    return descriptors.map((d) => this.resolveDescriptor(d, null));
   }
 
   createScope(): ServiceScope {
@@ -29,47 +48,76 @@ export class ServiceProvider implements ServiceResolver {
   }
 
   async dispose(): Promise<void> {
-    await disposeMany([...this.singletons.values()]);
-    this.singletons.clear();
+    const instances: unknown[] = [];
+    for (const descriptor of this.singletonDescriptors) {
+      const value = this.singletons.get(descriptor);
+      if (value !== undefined) {
+        instances.push(value);
+      }
+    }
+    await disposeMany(instances);
+    this.singletons = new WeakMap();
+    this.singletonDescriptors.clear();
   }
 
-  getDescriptor(token: Token): ServiceDescriptor | undefined {
-    return this.descriptors.get(token);
+  getDescriptor(token: Token, key?: ServiceKey): ServiceDescriptor | undefined {
+    return this.pickDescriptor(token, key);
+  }
+
+  getDescriptors<T>(token: Token<T>): ServiceDescriptor<T>[] | undefined {
+    return this.descriptors.get(token) as ServiceDescriptor<T>[] | undefined;
   }
 
   has(token: Token): boolean {
     return this.descriptors.has(token);
   }
 
-  resolveFromScope<T>(token: Token<T>, scope: ServiceScope): T {
-    return this.resolveInternal(token, scope);
+  resolveFromScope<T>(token: Token<T>, scope: ServiceScope, key?: ServiceKey): T {
+    return this.resolveInternal(token, scope, key);
   }
 
-  private resolveInternal<T>(token: Token<T>, scope: ServiceScope | null): T {
-    const descriptor = this.descriptors.get(token) as ServiceDescriptor<T> | undefined;
+  private resolveInternal<T>(
+    token: Token<T>,
+    scope: ServiceScope | null,
+    key?: ServiceKey,
+  ): T {
+    const descriptor = this.pickDescriptor(token, key) as ServiceDescriptor<T> | undefined;
     if (!descriptor) {
       throw new Error(`Service not registered: ${token.toString()}`);
     }
 
+    return this.resolveDescriptor(descriptor, scope);
+  }
+
+  resolveDescriptor<T>(descriptor: ServiceDescriptor<T>, scope: ServiceScope | null): T {
     if (descriptor.lifetime === ServiceLifetime.Singleton) {
-      if (this.singletons.has(token)) {
-        return this.singletons.get(token) as T;
-      }
+      const existing = this.singletons.get(descriptor);
+      if (existing) return existing as T;
       const instance = descriptor.factory(this) as T;
-      this.singletons.set(token, instance);
+      this.singletons.set(descriptor, instance);
+      this.singletonDescriptors.add(descriptor);
       return instance;
     }
 
     if (descriptor.lifetime === ServiceLifetime.Scoped) {
       if (!scope) {
         throw new Error(
-          `Cannot resolve scoped service "${token.toString()}" from root provider. Create a scope first.`,
+          `Cannot resolve scoped service "${descriptor.token.toString()}" from root provider. Create a scope first.`,
         );
       }
-      return scope.getOrCreate(token, descriptor);
+      return scope.getOrCreate(descriptor);
     }
 
     return descriptor.factory(scope ?? this) as T;
+  }
+
+  private pickDescriptor<T>(token: Token<T>, key?: ServiceKey): ServiceDescriptor<T> | undefined {
+    const descriptors = this.descriptors.get(token) as ServiceDescriptor<T>[] | undefined;
+    if (!descriptors?.length) return undefined;
+    if (key === undefined) {
+      return descriptors[descriptors.length - 1];
+    }
+    return descriptors.find((d) => d.key === key);
   }
 }
 

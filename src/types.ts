@@ -1,16 +1,20 @@
 import type { ServiceLifetime } from "./lifetime";
 
 export type Token<T = unknown> = string | symbol | (abstract new (...args: any[]) => T);
+export type ServiceKey = string | number | symbol;
 
 export interface ServiceDescriptor<T = unknown> {
+  id: symbol;
   token: Token<T>;
   lifetime: ServiceLifetime;
   factory: ServiceFactory<T>;
+  key?: ServiceKey;
 }
 
 export interface ServiceResolver {
-  resolve<T>(token: Token<T>): T;
-  tryResolve<T>(token: Token<T>): T | undefined;
+  resolve<T>(token: Token<T>, key?: ServiceKey): T;
+  tryResolve<T>(token: Token<T>, key?: ServiceKey): T | undefined;
+  resolveAll<T>(token: Token<T>): T[];
 }
 
 // Runtime marker to keep coverage tooling happy; purely informational.

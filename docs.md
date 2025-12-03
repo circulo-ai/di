@@ -7,8 +7,9 @@
 - `ServiceScope`: per-request resolver that caches scoped instances and disposes them.
 - `ServiceLifetime`: enum of `Singleton`, `Scoped`, `Transient`.
 - `Token<T>`: string | symbol | class constructor; used to identify registrations.
-- `resolve` vs `tryResolve`: `resolve` throws if missing; `tryResolve` returns `undefined`.
+- `resolve`, `tryResolve`, `resolveAll`: optional resolution and multi-resolve.
 - `has`: check if a token is registered.
+- `key`/`multiple`: register multiple implementations and pick by key.
 
 ## Patterns
 
@@ -41,6 +42,7 @@ const scope = provider.createScope();
 const logger = scope.resolve<typeof console>(TYPES.Logger);
 logger.info("hello");
 const maybeDb = scope.tryResolve(TYPES.Db); // undefined if not registered
+const allLoggers = scope.resolveAll(TYPES.Logger); // supports multiple
 await scope.dispose();
 ```
 

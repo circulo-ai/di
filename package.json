@@ -1,6 +1,6 @@
 {
   "name": "@circulo-ai/di",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
@@ -22,7 +22,7 @@
   },
   "scripts": {
     "dev": "tsc -p tsconfig.json --watch",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "type-check": "tsc --noEmit -p tsconfig.json",
     "prepack": "pnpm build",
     "test": "vitest run",

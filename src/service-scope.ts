@@ -1,36 +1,42 @@
 import { ServiceLifetime } from "./lifetime";
-import type { ServiceDescriptor, ServiceResolver, Token } from "./types";
+import type { ServiceDescriptor, ServiceKey, ServiceResolver, Token } from "./types";
 import { disposeMany, ServiceProvider } from "./service-provider";
 
 export class ServiceScope implements ServiceResolver {
-  private readonly scopedInstances = new Map<Token, unknown>();
+  private readonly scopedInstances = new Map<ServiceDescriptor, unknown>();
   private disposed = false;
 
   constructor(private readonly root: ServiceProvider) {}
 
-  resolve<T>(token: Token<T>): T {
-    return this.root.resolveFromScope(token, this);
+  resolve<T>(token: Token<T>, key?: ServiceKey): T {
+    return this.root.resolveFromScope(token, this, key);
   }
 
-  tryResolve<T>(token: Token<T>): T | undefined {
+  tryResolve<T>(token: Token<T>, key?: ServiceKey): T | undefined {
     try {
-      return this.resolve(token);
+      return this.resolve(token, key);
     } catch {
       return undefined;
     }
   }
 
-  getOrCreate<T>(token: Token<T>, descriptor: ServiceDescriptor<T>): T {
+  resolveAll<T>(token: Token<T>): T[] {
+    const descriptors = this.root.getDescriptors(token);
+    if (!descriptors?.length) return [];
+    return descriptors.map((d) => this.root.resolveDescriptor(d, this));
+  }
+
+  getOrCreate<T>(descriptor: ServiceDescriptor<T>): T {
     if (descriptor.lifetime !== ServiceLifetime.Scoped) {
-      throw new Error(`Descriptor for ${token.toString()} is not scoped`);
+      throw new Error(`Descriptor for ${descriptor.token.toString()} is not scoped`);
     }
 
-    if (this.scopedInstances.has(token)) {
-      return this.scopedInstances.get(token) as T;
+    if (this.scopedInstances.has(descriptor)) {
+      return this.scopedInstances.get(descriptor) as T;
     }
 
     const instance = descriptor.factory(this);
-    this.scopedInstances.set(token, instance);
+    this.scopedInstances.set(descriptor, instance);
     return instance;
   }
 
@@ -39,5 +45,13 @@ export class ServiceScope implements ServiceResolver {
     await disposeMany([...this.scopedInstances.values()]);
     this.scopedInstances.clear();
     this.disposed = true;
+  }
+
+  /**
+   * Exposed for testing/introspection; not part of public surface.
+   */
+  /* istanbul ignore next */
+  get activeCount(): number {
+    return this.scopedInstances.size;
   }
 }
