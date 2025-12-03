@@ -1,0 +1,48 @@
+{
+  "name": "@circulo-ai/di",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "README.md",
+    "docs.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsc -p tsconfig.json --watch",
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc --noEmit -p tsconfig.json",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "release": "pnpm build && npm publish --access public"
+  },
+  "peerDependencies": {
+    "hono": "^4.10.7"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.25",
+    "hono": "^4.10.7",
+    "@vitest/coverage-v8": "^2.1.4",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.4"
+  }
+}
