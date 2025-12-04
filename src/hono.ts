@@ -15,10 +15,10 @@ type WithContainer<TContainer extends ServiceScope> = {
 
 export function createContainerMiddleware<
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
 >(
   provider: ServiceProvider,
-  options?: { variableName?: string },
+  options?: { variableName?: string }
 ): MiddlewareHandler<TEnv> {
   const variableName = options?.variableName ?? "container";
   return async (c, next) => {
@@ -35,7 +35,7 @@ export function createContainerMiddleware<
 export function resolveFromContext<
   T,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
 >(c: Context<TEnv>, token: Token<T>, variableName = "container"): T {
   const container = (c.var as Record<string, unknown>)[variableName] as
     | TContainer
@@ -49,8 +49,12 @@ export function resolveFromContext<
 export function tryResolveFromContext<
   T,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
->(c: Context<TEnv>, token: Token<T>, variableName = "container"): T | undefined {
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+>(
+  c: Context<TEnv>,
+  token: Token<T>,
+  variableName = "container"
+): T | undefined {
   const container = (c.var as Record<string, unknown>)[variableName] as
     | TContainer
     | undefined;

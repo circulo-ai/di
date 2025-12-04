@@ -1,6 +1,9 @@
 import type { ServiceLifetime } from "./lifetime";
 
-export type Token<T = unknown> = string | symbol | (abstract new (...args: any[]) => T);
+export type Token<T = unknown> =
+  | string
+  | symbol
+  | (abstract new (...args: any[]) => T);
 export type ServiceKey = string | number | symbol;
 
 export type DiagnosticLevel = "warning" | "error";

@@ -1,5 +1,10 @@
 import { ServiceLifetime } from "./lifetime";
-import type { ServiceDescriptor, ServiceKey, ServiceResolver, Token } from "./types";
+import type {
+  ServiceDescriptor,
+  ServiceKey,
+  ServiceResolver,
+  Token,
+} from "./types";
 import { disposeMany, ServiceProvider } from "./service-provider";
 
 export class ServiceScope implements ServiceResolver {
@@ -28,7 +33,9 @@ export class ServiceScope implements ServiceResolver {
 
   getOrCreate<T>(descriptor: ServiceDescriptor<T>): T {
     if (descriptor.lifetime !== ServiceLifetime.Scoped) {
-      throw new Error(`Descriptor for ${descriptor.token.toString()} is not scoped`);
+      throw new Error(
+        `Descriptor for ${descriptor.token.toString()} is not scoped`
+      );
     }
 
     if (this.scopedInstances.has(descriptor)) {

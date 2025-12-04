@@ -38,7 +38,9 @@ export class ServiceProvider implements ServiceResolver {
   }
 
   resolveAll<T>(token: Token<T>): T[] {
-    const descriptors = this.descriptors.get(token) as ServiceDescriptor<T>[] | undefined;
+    const descriptors = this.descriptors.get(token) as
+      | ServiceDescriptor<T>[]
+      | undefined;
     if (!descriptors?.length) {
       return [];
     }
@@ -90,8 +92,12 @@ export class ServiceProvider implements ServiceResolver {
         if (group.length <= 1) continue;
         const message =
           key === undefined
-            ? `Multiple registrations for token ${tokenLabel(token)} without a key; resolve() will pick the last registration.`
-            : `Multiple registrations for token ${tokenLabel(token)} with key ${keyLabel(key)}; resolution is ambiguous.`;
+            ? `Multiple registrations for token ${tokenLabel(
+                token
+              )} without a key; resolve() will pick the last registration.`
+            : `Multiple registrations for token ${tokenLabel(
+                token
+              )} with key ${keyLabel(key)}; resolution is ambiguous.`;
         const level: DiagnosticLevel = key === undefined ? "warning" : "error";
         diagnostics.push({ level, message, token, key });
       }
@@ -108,28 +114,39 @@ export class ServiceProvider implements ServiceResolver {
     /* c8 ignore stop */
   }
 
-  resolveFromScope<T>(token: Token<T>, scope: ServiceScope, key?: ServiceKey): T {
+  resolveFromScope<T>(
+    token: Token<T>,
+    scope: ServiceScope,
+    key?: ServiceKey
+  ): T {
     return this.resolveInternal(token, scope, key);
   }
 
   private resolveInternal<T>(
     token: Token<T>,
     scope: ServiceScope | null,
-    key?: ServiceKey,
+    key?: ServiceKey
   ): T {
-    const descriptor = this.pickDescriptor(token, key) as ServiceDescriptor<T> | undefined;
+    const descriptor = this.pickDescriptor(token, key) as
+      | ServiceDescriptor<T>
+      | undefined;
     if (!descriptor) {
       throw new Error(
         key === undefined
           ? `Service not registered: ${tokenLabel(token)}`
-          : `Service not registered for token ${tokenLabel(token)} with key ${keyLabel(key)}`,
+          : `Service not registered for token ${tokenLabel(
+              token
+            )} with key ${keyLabel(key)}`
       );
     }
 
     return this.resolveDescriptor(descriptor, scope);
   }
 
-  resolveDescriptor<T>(descriptor: ServiceDescriptor<T>, scope: ServiceScope | null): T {
+  resolveDescriptor<T>(
+    descriptor: ServiceDescriptor<T>,
+    scope: ServiceScope | null
+  ): T {
     if (descriptor.lifetime === ServiceLifetime.Singleton) {
       const existing = this.singletons.get(descriptor);
       if (existing) return existing as T;
@@ -142,7 +159,9 @@ export class ServiceProvider implements ServiceResolver {
     if (descriptor.lifetime === ServiceLifetime.Scoped) {
       if (!scope) {
         throw new Error(
-          `Cannot resolve scoped service ${tokenLabel(descriptor.token)} from root provider. Create a scope first.`,
+          `Cannot resolve scoped service ${tokenLabel(
+            descriptor.token
+          )} from root provider. Create a scope first.`
         );
       }
       return scope.getOrCreate(descriptor);
@@ -151,8 +170,13 @@ export class ServiceProvider implements ServiceResolver {
     return descriptor.factory(scope ?? this) as T;
   }
 
-  private pickDescriptor<T>(token: Token<T>, key?: ServiceKey): ServiceDescriptor<T> | undefined {
-    const descriptors = this.descriptors.get(token) as ServiceDescriptor<T>[] | undefined;
+  private pickDescriptor<T>(
+    token: Token<T>,
+    key?: ServiceKey
+  ): ServiceDescriptor<T> | undefined {
+    const descriptors = this.descriptors.get(token) as
+      | ServiceDescriptor<T>[]
+      | undefined;
     if (!descriptors?.length) return undefined;
     if (key === undefined) {
       return descriptors[descriptors.length - 1];
@@ -177,21 +201,33 @@ export async function disposeMany(services: unknown[]): Promise<void> {
   }
 }
 
-function getDisposeFn(service: unknown): (() => void | Promise<void>) | undefined {
-  if (!service || (typeof service !== "object" && typeof service !== "function")) {
+function getDisposeFn(
+  service: unknown
+): (() => void | Promise<void>) | undefined {
+  if (
+    !service ||
+    (typeof service !== "object" && typeof service !== "function")
+  ) {
     return undefined;
   }
   const candidate = service as MaybeDisposable & Record<string, unknown>;
-  if (typeof candidate.dispose === "function") return candidate.dispose.bind(service);
-  if (typeof candidate.close === "function") return candidate.close.bind(service);
-  if (typeof candidate.destroy === "function") return candidate.destroy.bind(service);
+  if (typeof candidate.dispose === "function")
+    return candidate.dispose.bind(service);
+  if (typeof candidate.close === "function")
+    return candidate.close.bind(service);
+  if (typeof candidate.destroy === "function")
+    return candidate.destroy.bind(service);
   return undefined;
 }
 
 /* istanbul ignore next */
 /* c8 ignore start */
 function tokenLabel(token: Token): string {
-  if (typeof token === "string" || typeof token === "number" || typeof token === "symbol") {
+  if (
+    typeof token === "string" ||
+    typeof token === "number" ||
+    typeof token === "symbol"
+  ) {
     return String(token);
   }
   return token.name ?? "anonymous";

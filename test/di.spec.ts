@@ -13,7 +13,10 @@ describe("Service lifetimes", () => {
   it("reuses singleton and disposes once", async () => {
     const dispose = vi.fn();
     const instance = { value: random(), dispose };
-    const services = new ServiceCollection().addSingleton("Singleton", instance);
+    const services = new ServiceCollection().addSingleton(
+      "Singleton",
+      instance
+    );
     const provider = services.build();
 
     const a = provider.resolve<typeof instance>("Singleton");
@@ -99,11 +102,17 @@ describe("Resolution helpers", () => {
   it("supports multiple singleton registrations with keys", () => {
     const services = new ServiceCollection()
       .addSingleton("Repo", { name: "main" }, { multiple: true, key: "main" })
-      .addSingleton("Repo", { name: "shadow" }, { multiple: true, key: "shadow" });
+      .addSingleton(
+        "Repo",
+        { name: "shadow" },
+        { multiple: true, key: "shadow" }
+      );
     const provider = services.build();
     const main = provider.resolve<{ name: string }>("Repo", "main");
     expect(main.name).toBe("main");
-    const names = provider.resolveAll<{ name: string }>("Repo").map((r) => r.name);
+    const names = provider
+      .resolveAll<{ name: string }>("Repo")
+      .map((r) => r.name);
     expect(names).toEqual(["main", "shadow"]);
   });
 
@@ -153,7 +162,10 @@ describe("Resolution helpers", () => {
   });
 
   it("resolveAll on scope returns [] when none and values when registered", () => {
-    const services = new ServiceCollection().addScoped("Scoped", () => "scoped");
+    const services = new ServiceCollection().addScoped(
+      "Scoped",
+      () => "scoped"
+    );
     const provider = services.build();
     const scope = provider.createScope();
     expect(scope.resolveAll("Missing")).toEqual([]);
@@ -282,8 +294,13 @@ describe("Hono helpers", () => {
   it("supports custom variable name", async () => {
     const services = new ServiceCollection().addScoped("Value", () => 123);
     const provider = services.build();
-    const middleware = createContainerMiddleware(provider, { variableName: "scope" });
-    const ctx = { var: {}, set: (k: string, v: unknown) => ((ctx.var as any)[k] = v) };
+    const middleware = createContainerMiddleware(provider, {
+      variableName: "scope",
+    });
+    const ctx = {
+      var: {},
+      set: (k: string, v: unknown) => ((ctx.var as any)[k] = v),
+    };
     await middleware(ctx as any, async () => {});
     const value = resolveFromContext<number>(ctx as any, "Value", "scope");
     expect(value).toBe(123);
@@ -292,7 +309,9 @@ describe("Hono helpers", () => {
 
 describe("Internals and guards", () => {
   it("wraps singleton factories and exposes descriptors", () => {
-    const services = new ServiceCollection().addSingleton("Factory", () => ({ n: 1 }));
+    const services = new ServiceCollection().addSingleton("Factory", () => ({
+      n: 1,
+    }));
     const provider = services.build();
     const descriptor = provider.getDescriptor("Factory");
     expect(descriptor?.lifetime).toBe(ServiceLifetime.Singleton);
