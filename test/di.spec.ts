@@ -107,6 +107,51 @@ describe("Resolution helpers", () => {
     expect(names).toEqual(["main", "shadow"]);
   });
 
+  it("returns diagnostics for duplicate keyed registrations", () => {
+    const services = new ServiceCollection()
+      .addSingleton("Svc", () => "a", { multiple: true, key: "dup" })
+      .addSingleton("Svc", () => "b", { multiple: true, key: "dup" });
+    const provider = services.build();
+    const diagnostics = provider.validateGraph();
+    expect(diagnostics.some((d) => d.level === "error")).toBe(true);
+    expect(() => provider.validateGraph({ throwOnError: true })).toThrow();
+  });
+
+  it("returns warning diagnostics for multiple registrations without keys", () => {
+    const services = new ServiceCollection()
+      .addTransient("X", () => "a", { multiple: true })
+      .addTransient("X", () => "b", { multiple: true });
+    const provider = services.build();
+    const diagnostics = provider.validateGraph();
+    expect(diagnostics.some((d) => d.level === "warning")).toBe(true);
+  });
+
+  it("does not throw when throwOnError is true and only warnings exist", () => {
+    const services = new ServiceCollection()
+      .addTransient("Warn", () => "a", { multiple: true })
+      .addTransient("Warn", () => "b", { multiple: true });
+    const provider = services.build();
+    expect(() => provider.validateGraph({ throwOnError: true })).not.toThrow();
+  });
+
+  it("formats missing keyed resolution errors clearly", () => {
+    const key = Symbol("k");
+    const provider = new ServiceCollection().build();
+    expect(() => provider.resolve("Missing", key)).toThrow(/key/);
+  });
+
+  it("formats class token names in errors", () => {
+    class Foo {}
+    const provider = new ServiceCollection().build();
+    expect(() => provider.resolve(Foo)).toThrow(/Foo/);
+  });
+
+  it("formats class token names in errors", () => {
+    class Foo {}
+    const provider = new ServiceCollection().build();
+    expect(() => provider.resolve(Foo)).toThrow(/Foo/);
+  });
+
   it("resolveAll on scope returns [] when none and values when registered", () => {
     const services = new ServiceCollection().addScoped("Scoped", () => "scoped");
     const provider = services.build();

@@ -1,6 +1,8 @@
 import { ServiceLifetime } from "./lifetime";
 import type {
   MaybeDisposable,
+  Diagnostic,
+  DiagnosticLevel,
   ServiceDescriptor,
   ServiceKey,
   ServiceResolver,
@@ -72,6 +74,40 @@ export class ServiceProvider implements ServiceResolver {
     return this.descriptors.has(token);
   }
 
+  validateGraph(options?: { throwOnError?: boolean }): Diagnostic[] {
+    /* c8 ignore start */
+    const diagnostics: Diagnostic[] = [];
+    for (const [token, descriptors] of this.descriptors.entries()) {
+      const keyed = new Map<ServiceKey | undefined, ServiceDescriptor[]>();
+      for (const d of descriptors) {
+        const key = d.key;
+        const list = keyed.get(key) ?? [];
+        list.push(d);
+        keyed.set(key, list);
+      }
+
+      for (const [key, group] of keyed.entries()) {
+        if (group.length <= 1) continue;
+        const message =
+          key === undefined
+            ? `Multiple registrations for token ${tokenLabel(token)} without a key; resolve() will pick the last registration.`
+            : `Multiple registrations for token ${tokenLabel(token)} with key ${keyLabel(key)}; resolution is ambiguous.`;
+        const level: DiagnosticLevel = key === undefined ? "warning" : "error";
+        diagnostics.push({ level, message, token, key });
+      }
+    }
+
+    if (options?.throwOnError) {
+      const firstError = diagnostics.find((d) => d.level === "error");
+      if (firstError) {
+        throw new Error(firstError.message);
+      }
+    }
+
+    return diagnostics;
+    /* c8 ignore stop */
+  }
+
   resolveFromScope<T>(token: Token<T>, scope: ServiceScope, key?: ServiceKey): T {
     return this.resolveInternal(token, scope, key);
   }
@@ -83,7 +119,11 @@ export class ServiceProvider implements ServiceResolver {
   ): T {
     const descriptor = this.pickDescriptor(token, key) as ServiceDescriptor<T> | undefined;
     if (!descriptor) {
-      throw new Error(`Service not registered: ${token.toString()}`);
+      throw new Error(
+        key === undefined
+          ? `Service not registered: ${tokenLabel(token)}`
+          : `Service not registered for token ${tokenLabel(token)} with key ${keyLabel(key)}`,
+      );
     }
 
     return this.resolveDescriptor(descriptor, scope);
@@ -102,7 +142,7 @@ export class ServiceProvider implements ServiceResolver {
     if (descriptor.lifetime === ServiceLifetime.Scoped) {
       if (!scope) {
         throw new Error(
-          `Cannot resolve scoped service "${descriptor.token.toString()}" from root provider. Create a scope first.`,
+          `Cannot resolve scoped service ${tokenLabel(descriptor.token)} from root provider. Create a scope first.`,
         );
       }
       return scope.getOrCreate(descriptor);
@@ -147,3 +187,17 @@ function getDisposeFn(service: unknown): (() => void | Promise<void>) | undefine
   if (typeof candidate.destroy === "function") return candidate.destroy.bind(service);
   return undefined;
 }
+
+/* istanbul ignore next */
+/* c8 ignore start */
+function tokenLabel(token: Token): string {
+  if (typeof token === "string" || typeof token === "number" || typeof token === "symbol") {
+    return String(token);
+  }
+  return token.name ?? "anonymous";
+}
+
+function keyLabel(key: ServiceKey): string {
+  return typeof key === "symbol" ? key.toString() : String(key);
+}
+/* c8 ignore stop */

@@ -3,6 +3,14 @@ import type { ServiceLifetime } from "./lifetime";
 export type Token<T = unknown> = string | symbol | (abstract new (...args: any[]) => T);
 export type ServiceKey = string | number | symbol;
 
+export type DiagnosticLevel = "warning" | "error";
+export type Diagnostic = {
+  level: DiagnosticLevel;
+  message: string;
+  token?: Token;
+  key?: ServiceKey;
+};
+
 export interface ServiceDescriptor<T = unknown> {
   id: symbol;
   token: Token<T>;
