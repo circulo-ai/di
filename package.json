@@ -1,6 +1,6 @@
 {
   "name": "@circulo-ai/di",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
@@ -8,6 +8,14 @@
     "dist",
     "README.md",
     "docs.md"
+  ],
+  "keywords": [
+    "dependency-injection",
+    "di",
+    "ioc",
+    "container",
+    "typescript",
+    "hono"
   ],
   "author": "mhbdev/Circulo <1839491@gmail.com>",
   "main": "./dist/index.js",
