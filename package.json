@@ -9,8 +9,17 @@
     "README.md",
     "docs.md"
   ],
+  "author": "mhbdev/Circulo <1839491@gmail.com>",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/circulo-ai/di.git"
+  },
+  "bugs": {
+    "url": "https://github.com/circulo-ai/di/issues"
+  },
+  "homepage": "https://github.com/circulo-ai/di#readme",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
