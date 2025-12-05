@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+### Patch Changes
+
+- 563b44b: Updated docs.md
+
 ## 2.0.0
 
 ### Major Changes
