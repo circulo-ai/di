@@ -95,11 +95,20 @@ export function createContextDiProxy<
      * to preserve transient service semantics.
      */
     cache?: boolean;
+    /**
+     * Alias for cache; kept for clarity.
+     */
+    memoize?: boolean;
+    /**
+     * Throw if a token is missing instead of returning undefined.
+     */
+    strict?: boolean;
   }
 ): MiddlewareHandler<TEnv> {
   const variableName = options?.variableName ?? "container";
   const propertyName = options?.propertyName ?? "di";
-  const cache = options?.cache ?? false;
+  const cache = options?.memoize ?? options?.cache ?? false;
+  const strict = options?.strict ?? false;
 
   return async (c, next) => {
     const container = (c.var as Record<string, unknown>)[variableName] as
@@ -111,7 +120,7 @@ export function createContextDiProxy<
 
     const current = (c as unknown as Record<string, unknown>)[propertyName];
     if (!current) {
-      const proxy = createServiceProxy(container, tokens, cache);
+      const proxy = createServiceProxy(container, tokens, cache, strict);
       Object.defineProperty(c, propertyName, {
         value: proxy,
         enumerable: false,
@@ -130,7 +139,8 @@ function createServiceProxy<
 >(
   container: TContainer,
   tokens: TTokens,
-  cache: boolean
+  cache: boolean,
+  strict: boolean
 ): ServicesFromTokens<TTokens> {
   const resolved = cache ? new Map<keyof TTokens, unknown>() : null;
 
@@ -149,7 +159,9 @@ function createServiceProxy<
         throw new Error(`Service token not registered for "${prop}".`);
       }
 
-      const value = container.resolve(token);
+      const value = container.resolve(
+        token as Token<ServicesFromTokens<TTokens>[typeof key]>,
+      );
       if (resolved) {
         resolved.set(key, value);
       }
@@ -157,4 +169,65 @@ function createServiceProxy<
       return value as ServicesFromTokens<TTokens>[typeof key];
     },
   });
+}
+
+export function bindToHono<
+  TTokens extends Record<string, Token>,
+  TContainer extends ServiceScope = ServiceScope,
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+>(
+  app: { use: (path: string, mw: MiddlewareHandler<TEnv>) => void },
+  provider: ServiceProvider,
+  tokens: TTokens,
+  options?: {
+    var?: string;
+    prop?: string;
+    cache?: boolean;
+    memoize?: boolean;
+    strict?: boolean;
+  },
+): void {
+  const variableName = options?.var ?? "container";
+  const propertyName = options?.prop ?? "di";
+  const cache = options?.memoize ?? options?.cache ?? true;
+  const strict = options?.strict ?? false;
+
+  app.use("*", createContainerMiddleware(provider, { variableName }));
+  app.use(
+    "*",
+    createContextDiProxy(tokens, {
+      variableName,
+      propertyName,
+      cache,
+      strict,
+    }),
+  );
+}
+
+export function decorateContext<
+  TTokens extends Record<string, Token>,
+  TContainer extends ServiceScope = ServiceScope,
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+>(
+  tokens: TTokens,
+  options?: { variableName?: string; targetVar?: string },
+): MiddlewareHandler<TEnv> {
+  const variableName = options?.variableName ?? "container";
+  const targetVar = options?.targetVar ?? "services";
+  return async (c, next) => {
+    const container = (c.var as Record<string, unknown>)[variableName] as
+      | TContainer
+      | undefined;
+    if (!container) {
+      throw new Error("DI container is missing on the request context.");
+    }
+    const resolved: Record<string, unknown> = {};
+    for (const [name, token] of Object.entries(tokens)) {
+      resolved[name] = await container.resolveAsync(
+        token as Token<unknown>,
+      );
+    }
+    c.set(targetVar as any, resolved as any);
+    await next();
+  };
 }
