@@ -1,89 +1,211 @@
-# DI Package Guide
+# @circulo-ai/di Guide
 
-## Core APIs
+Everything you need to wire services with predictable lifetimes, explicit disposal, and great DX.
 
-- `ServiceCollection`: register services with `addSingleton`, `addGlobalSingleton`, `addScoped`, `addTransient`, `useExisting`, `useClass`; defaults for `allowOverwrite` / `defaultMultiple`; capture metadata (registeredAt/source).
-- `ServiceProvider`: resolves sync/async factories, caches singletons/global singletons, creates scopes, tracing hook, `withScope`, structured errors with paths.
-- `ServiceScope`: per-request/per-operation resolver that caches scoped instances and disposes them in reverse resolution order with priorities.
-- `ServiceLifetime`: enum of `Singleton`, `GlobalSingleton`, `Scoped`, `Transient`.
-- `Token<T>`: string | symbol | class constructor; `createToken<T>()` helper recommended; `optional(token)` for optional resolution.
-- `resolve`, `resolveAsync`, `tryResolve`, `tryResolveAsync`, `resolveAll`, `resolveMap`.
-- `has`: check if a token is registered.
-- `key`/`multiple`: register multiple implementations and pick by key.
-- Helpers: `factory`/`lazy`, `ifProd`/`ifDev`/`ifTruthy`, `bindToHono`, `decorateContext`.
-
-## Patterns
-
-- Prefer `symbol` tokens for uniqueness.
-- For scoped lifetimes, create one scope per request and dispose it.
-- Inject factories instead of concrete instances for transients to avoid heavy allocations.
-
-## Example: Per-request DB + Logger
+## Quick start
 
 ```ts
-import { ServiceCollection } from "@circulo-ai/di";
-import { db } from "./db";
+import {
+  ServiceCollection,
+  ServiceLifetime,
+  createToken,
+  optional,
+} from "@circulo-ai/di";
 
 const TYPES = {
-  Db: Symbol("Db"),
-  Logger: Symbol("Logger"),
-} as const;
+    Db: createToken("db"),
+    Logger: createToken("logger"),
+    Clock: createToken<Date>("clock"),
+};
 
-const services = new ServiceCollection()
-  .addScoped(TYPES.Db, () => db) // replace with tx-bound client if needed
-  .addScoped(TYPES.Logger, () => {
-    const requestId = crypto.randomUUID();
-    return {
-      info: (msg: string, meta?: unknown) => console.log(requestId, msg, meta),
-    };
-  })
-  .addSingleton("Config", async () => await loadConfig());
+const services = new ServiceCollection({ allowOverwrite: false, trace: console.debug })
+  .addGlobalSingleton(TYPES.Db, async () => createPool())          // survives hot-reload
+  .addScoped(TYPES.Logger, () => makeRequestLogger())              // per-request
+  .addTransient(TYPES.Clock, () => new Date());                    // every resolve
 
 const provider = services.build();
 
+// per-request/operation
 await provider.withScope(async (scope) => {
-  const logger = scope.resolve<typeof console>(TYPES.Logger);
-  logger.info("hello");
-  const maybeDb = scope.tryResolve(TYPES.Db); // undefined if not registered
-  const allLoggers = scope.resolveAll(TYPES.Logger); // supports multiple
-  const config = await scope.resolveAsync("Config"); // async factory
+  const db = await scope.resolveAsync(TYPES.Db);
+  const logger = scope.resolve(TYPES.Logger);
+  logger.info("running");
+  const maybeFeature = scope.resolve(optional(createToken("featureFlag"))); // undefined if missing
 });
 ```
 
-## Hono Middleware Pattern
+## Core concepts
+- **ServiceCollection**: register descriptors with lifetimes (`Singleton`, `GlobalSingleton`, `Scoped`, `Transient`). Options: `allowOverwrite`, `defaultMultiple`, `trace`, `captureStack`.
+- **Tokens**: prefer `createToken<T>()` for type safety; `optional(token)` for safe miss returns `undefined`.
+- **Resolver APIs**: `resolve`, `resolveAsync`, `tryResolve*`, `resolveAll`, `resolveMap` (keyed), `has`, `getDescriptor(s)`.
+- **Scopes**: created per request/task; cache scoped instances; dispose in reverse resolution order honoring `disposePriority`. Hooks: `onDispose`/`onDisposeWithPriority`.
+- **Provider**: caches singletons/global singletons, exposes `withScope`, disposal hooks, tracing, graph validation, and circular detection.
 
+## Registration helpers
+- `useExisting(services, Alias, Source, { lifetime, key })`: alias another token, optionally keyed/multiple.
+- `useClass(services, Token, Klass, { lifetime, key })`: construct class.
+- `factory(token)`: inject a resolver function to fetch a token on-demand.
+- `lazy(token)`: memoized thunk per scope.
+- `ifProd/ifDev/ifTruthy(envVar)`: conditional registration helpers.
+- Value providers with disposal: `addSingleton(token, { value, dispose|close|destroy })`.
+
+## Lifetimes & disposal
+- `Singleton`: once per provider; disposed on `provider.dispose()` in priority order (higher first, then reverse creation).
+- `GlobalSingleton`: stored in `globalThis` across providers/hot reloads. Clear manually if needed.
+- `Scoped`: once per scope; disposed on `scope.dispose()` with `disposePriority` and reverse resolution order.
+- `Transient`: new instance each resolve; not cached or disposed automatically.
+- Supported disposers: `dispose`, `close`, `destroy`, `Symbol.dispose`, `Symbol.asyncDispose`, or a custom disposer you attach to value providers.
+- Hooks: `scope.onDispose*`, `provider.onDispose*`; `provider.withScope(fn)` wraps work with automatic dispose.
+
+## Async factories
+- Factories may return promises; use `resolveAsync/tryResolveAsync`. In-flight promises are deduped for the same descriptor (singleton/global/scoped).
+- Sync resolve against an async factory throws `AsyncFactoryError` to avoid partial state.
+
+## Keys, multiples, and maps
+- Register multiple implementations with `{ multiple: true }`; optionally add `key`.
+- `resolve(token, key?)` picks the last descriptor for unkeyed or the matching key.
+- `resolveAll(token)` returns all instances.
+- `resolveMap(token)` returns an object keyed by registration key and throws if unkeyed duplicates exist.
+
+## Diagnostics & tracing
+- Structured errors: `MissingServiceError`, `ScopeResolutionError`, `AsyncFactoryError`, `CircularDependencyError` include token/key/path breadcrumbs.
+- `validateGraph({ throwOnError, requireKeysForMultiple, unusedTokens })` warns/errors about duplicate keys, mixed keyed/unkeyed, missing registrations, unused tokens.
+- Tracing: pass `trace(event)` to `ServiceCollection` defaults to observe `{ token, key, lifetime, path, async }`.
+- Metadata: descriptors include `registeredAt` and optional `source` (when `captureStack` enabled).
+
+## Hono integration
+- `createContainerMiddleware(provider, { variableName })`: attaches a new scope to each request.
+- `createContextDiProxy(tokens, { propertyName, variableName, cache, strict })`: exposes typed proxy on context (default `c.di`), optional per-request memoization, and strict missing-token errors.
+- `bindToHono(app, provider, tokens, { var, prop, cache, strict })`: installs both middleware in one call.
+- `decorateContext(tokens, { variableName, targetVar })`: eagerly resolve and attach to `c.var`.
+- `resolveFromContext/tryResolveFromContext(ctx, token, variableName?)`: fetch services from context.
+
+## Guards & graph safety
+- Circular detection with breadcrumb paths.
+- Scoped resolution from root throws `ScopeResolutionError`.
+- Async factories resolved synchronously throw `AsyncFactoryError`.
+- Optional tokens return `undefined` without throwing.
+
+## Recipes
+- **Global pool + per-request scope**
+  ```ts
+  const TYPES = { Pool: createToken("pool"), Tx: createToken("tx") };
+  services
+    .addGlobalSingleton(TYPES.Pool, () => createPool(), { disposePriority: 10 })
+    .addScoped(TYPES.Tx, async (r) => r.resolve(TYPES.Pool).transaction());
+  ```
+- **Background job scope**
+  ```ts
+  await provider.withScope(async (scope) => {
+    const jobLogger = scope.resolve(TYPES.Logger);
+    const tx = await scope.resolveAsync(TYPES.Tx);
+    // work...
+  });
+  ```
+- **Keyed multi-binding**
+  ```ts
+  services
+    .addTransient("Handler", () => handlerA, { key: "a", multiple: true })
+    .addTransient("Handler", () => handlerB, { key: "b", multiple: true });
+  const handlers = provider.resolveMap("Handler"); // { a, b }
+  ```
+- **Conditional registrations**
+  ```ts
+  ifProd(services, (s) => s.addSingleton("Cache", () => new RedisCache()));
+  ifDev(services, (s) => s.addSingleton("Cache", () => new MemoryCache()));
+  ifTruthy(services, "ENABLE_SEARCH", (s) => s.addSingleton("Search", initSearch));
+  ```
+
+## Real-world examples
+
+### 1) Hono server with strict DI proxy
 ```ts
-import { bindToHono, createToken, decorateContext } from "@circulo-ai/di";
 import { Hono } from "hono";
+import { bindToHono, createToken, ServiceCollection } from "@circulo-ai/di";
+import { createPool } from "./db";
 
-const TYPES = { Logger: createToken<typeof console>("logger") };
+const TYPES = {
+  Db: createToken("db"),
+  Logger: createToken<typeof console>("logger"),
+};
+
+const services = new ServiceCollection({ allowOverwrite: false })
+  .addGlobalSingleton(TYPES.Db, () => createPool(), { disposePriority: 10 })
+  .addScoped(TYPES.Logger, () => makeRequestLogger());
+
+const provider = services.build();
 const app = new Hono();
 bindToHono(app as any, provider, TYPES, { cache: true, strict: true });
-app.use("*", decorateContext(TYPES, { targetVar: "svc" }) as any);
 
-app.get("/example", (c) => {
-  const logger = (c as any).di.Logger;
-  logger.info("handled request");
-  return c.json({ ok: true });
+app.get("/health", (c) => c.json({ ok: true }));
+app.get("/users", async (c) => {
+  const { Db, Logger } = (c as any).di;
+  const rows = await Db.query("select * from users");
+  Logger.info("fetched users", { count: rows.length });
+  return c.json(rows);
 });
 ```
 
-## Disposal Semantics
+### 2) Background worker with scoped job resources
+```ts
+const TYPES = { Queue: createToken("queue"), JobLogger: createToken("jobLogger") };
 
-- On `scope.dispose()`, any scoped instance with `dispose/close/destroy/Symbol.dispose/Symbol.asyncDispose` is called in reverse resolution order honoring `disposePriority`.
-- On `provider.dispose()`, singleton disposables are called similarly. `addGlobalSingleton` instances live in `globalThis` and are not disposed automatically.
-- Custom disposers on value providers: `addSingleton(token, { value, dispose })`.
-- `scope.onDispose` / `provider.onDispose` let you register custom cleanup hooks (optionally with priority).
-- `provider.withScope(fn)` creates/disposes a scope around a function call.
-- Use this for DB clients, queues, or other handles that need cleanup.
+const services = new ServiceCollection()
+  .addGlobalSingleton(TYPES.Queue, () => connectQueue())
+  .addScoped(TYPES.JobLogger, () => createJobLogger());
 
-## Testing
+const provider = services.build();
 
-- Build a fresh `ServiceCollection` in tests and register fakes/stubs.
-- For Hono handlers, create a scope, set it on `c.set("container", scope)`, and resolve services as usual.
+export async function handleJob(payload: JobPayload) {
+  return provider.withScope(async (scope) => {
+    const queue = scope.resolve(TYPES.Queue);
+    const log = scope.resolve(TYPES.JobLogger);
+    log.info("processing job", payload.id);
+    // ...
+  });
+}
+```
 
-## Publishing Checklist
+### 3) Testing with overrides
+```ts
+const TYPES = { Service: createToken<string>("service") };
+const services = new ServiceCollection({ allowOverwrite: true })
+  .addSingleton(TYPES.Service, "real");
 
-1) `pnpm -C packages/di type-check`
-2) `pnpm -C packages/di build`
-3) `pnpm -C packages/di release` (builds and publishes with `--access public`)
+// override in tests
+services.addSingleton(TYPES.Service, "fake");
+const provider = services.build();
+
+expect(provider.resolve(TYPES.Service)).toBe("fake");
+```
+
+### 4) Keyed multi-handler routing
+```ts
+type Handler = (input: string) => string;
+const HANDLER = createToken<Handler>("handler");
+const services = new ServiceCollection()
+  .addTransient(HANDLER, () => (x) => x.toUpperCase(), { key: "up", multiple: true })
+  .addTransient(HANDLER, () => (x) => x.trim(), { key: "trim", multiple: true });
+
+const provider = services.build();
+const map = provider.resolveMap(HANDLER);
+console.log(map.up("hi"), map.trim(" hi "));
+```
+
+### 5) Optional dependency for feature flags
+```ts
+const CACHE = createToken<Cache>("cache");
+const services = new ServiceCollection();
+// only register when feature flag is set
+ifTruthy(services, "ENABLE_CACHE", (s) => s.addSingleton(CACHE, () => new Cache()));
+
+const provider = services.build();
+const cache = provider.resolve(optional(CACHE)); // Cache | undefined
+```
+
+## Checklist for consumers
+- Use `createToken` + `bindToHono` with `strict: true` for handlers.
+- Prefer `GlobalSingleton` for long-lived pools in serverless/hot-reload environments.
+- Always dispose scopes for background tasks (`withScope`) and root provider on shutdown.
+- Use `disposePriority` to close outward-facing servers before DB pools.
+- Enable `trace` during development; run `validateGraph` in CI for guardrails.
