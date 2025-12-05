@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+### Patch Changes
+
+- Added a hono example for @circulo-ai/di package
+
 ## 1.2.0
 
 ### Minor Changes
