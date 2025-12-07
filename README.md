@@ -15,7 +15,7 @@ A lightweight dependency injection toolkit with singleton, scoped, global-single
 ## Install
 
 ```bash
-pnpm add @circulo-ai/di
+bun add @circulo-ai/di
 ```
 
 ## Quickstart
@@ -35,8 +35,14 @@ services.addScoped("RequestId", () => crypto.randomUUID());
 services.addTransient("Now", () => () => new Date());
 
 // Multiple/Keyed registrations
-services.addSingleton("Cache", () => primaryCache, { key: "primary", multiple: true });
-services.addSingleton("Cache", () => secondaryCache, { key: "secondary", multiple: true });
+services.addSingleton("Cache", () => primaryCache, {
+  key: "primary",
+  multiple: true,
+});
+services.addSingleton("Cache", () => secondaryCache, {
+  key: "secondary",
+  multiple: true,
+});
 
 const provider = services.build();
 const scope = provider.createScope();
@@ -122,14 +128,14 @@ await provider.dispose(); // cleans up singletons
 ## Developing
 
 ```bash
-pnpm -C packages/di type-check
-pnpm -C packages/di build
+bun --cwd packages/di run type-check
+bun --cwd packages/di run build
 ```
 
 ## Publishing
 
 ```bash
-pnpm -C packages/di release
+bun -cwd packages/di run release
 ```
 
 The `release` script builds and publishes with `--access public`. `prepack` also runs the build automatically if you publish manually.

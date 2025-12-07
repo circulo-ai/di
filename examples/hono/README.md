@@ -5,8 +5,8 @@ Tiny example showing how to wire the DI container into a Hono app and access ser
 ## Run it
 
 ```bash
-pnpm install     # from repo root to link workspace deps
-pnpm --filter hono dev
+bun install     # from repo root to link workspace deps
+bun --filter hono dev
 # or with bun directly: bun install && bun run dev
 ```
 
@@ -14,7 +14,8 @@ Visit http://localhost:3000 and http://localhost:3000/time.
 
 ## How it works
 
-1) Define tokens and build a provider (`src/container.ts`)
+1. Define tokens and build a provider (`src/container.ts`)
+
 ```ts
 export const DI_TOKENS = {
   GreetingService: Symbol("GreetingService"),
@@ -28,20 +29,23 @@ services.addScoped(
 );
 ```
 
-2) Expose a typed `c.di` proxy (`src/di-context.ts`)
+2. Expose a typed `c.di` proxy (`src/di-context.ts`)
+
 ```ts
 export const requestDi = createContextDiProxy<typeof DI_TOKENS, RequestScope>(
   DI_TOKENS,
 );
 ```
 
-3) Attach middleware in the app (`src/app.ts`)
+3. Attach middleware in the app (`src/app.ts`)
+
 ```ts
 app.use("*", createContainerMiddleware<RequestScope, AppEnv>(provider));
 app.use("*", requestDi);
 ```
 
-4) Augment Hono `Context` so TypeScript knows about `c.di` (`src/types/hono-di.d.ts`)
+4. Augment Hono `Context` so TypeScript knows about `c.di` (`src/types/hono-di.d.ts`)
+
 ```ts
 declare module "hono" {
   interface Context {
@@ -50,7 +54,10 @@ declare module "hono" {
 }
 ```
 
-5) Use services in routes (`src/app.ts`)
+5. Use services in routes (`src/app.ts`)
+
 ```ts
-app.get("/", (c) => c.json({ greeting: c.di.GreetingService.greet("Hono + DI") }));
+app.get("/", (c) =>
+  c.json({ greeting: c.di.GreetingService.greet("Hono + DI") }),
+);
 ```

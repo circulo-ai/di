@@ -41,11 +41,11 @@
     "dev": "tsc -p tsconfig.json --watch",
     "build": "tsc -p tsconfig.build.json",
     "type-check": "tsc --noEmit -p tsconfig.json",
-    "prepack": "pnpm build",
+    "prepack": "bun build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "release": "pnpm build && npm publish --access public"
+    "release": "bun build && npm publish --access public"
   },
   "peerDependencies": {
     "hono": "^4.10.7"
