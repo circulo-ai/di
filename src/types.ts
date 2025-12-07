@@ -49,7 +49,9 @@ export interface ServiceResolver {
 export const TYPES_MODULE_LOADED = true;
 
 export type ServiceFactoryResult<T> = T | Promise<T>;
-export type ServiceFactory<T> = (resolver: ServiceResolver) => ServiceFactoryResult<T>;
+export type ServiceFactory<T> = (
+  resolver: ServiceResolver,
+) => ServiceFactoryResult<T>;
 
 export type MaybeDisposable =
   | { dispose?: () => void | Promise<void> }
