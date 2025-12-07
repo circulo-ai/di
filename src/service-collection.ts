@@ -82,7 +82,12 @@ export class ServiceCollection {
   addScoped<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
-    options?: { key?: ServiceKey; multiple?: boolean; disposePriority?: number; source?: string },
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
     return this.addDescriptor(
       token,
@@ -103,7 +108,12 @@ export class ServiceCollection {
   addTransient<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
-    options?: { key?: ServiceKey; multiple?: boolean; disposePriority?: number; source?: string },
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
     return this.addDescriptor(
       token,
@@ -123,13 +133,23 @@ export class ServiceCollection {
 
   build(): ServiceProvider {
     return new ServiceProvider(
-      [...this.descriptors.entries()].flatMap(([_, descriptors]) => descriptors),
+      [...this.descriptors.entries()].flatMap(
+        ([_, descriptors]) => descriptors,
+      ),
       { trace: this.defaults.trace },
     );
   }
 
   private wrapFactory<T>(
-    factoryOrInstance: ServiceFactory<T> | T | { value: T; dispose?: DisposeFn; close?: DisposeFn; destroy?: DisposeFn },
+    factoryOrInstance:
+      | ServiceFactory<T>
+      | T
+      | {
+          value: T;
+          dispose?: DisposeFn;
+          close?: DisposeFn;
+          destroy?: DisposeFn;
+        },
   ): ServiceFactory<T> {
     if (typeof factoryOrInstance === "function") {
       return factoryOrInstance as ServiceFactory<T>;
@@ -157,7 +177,8 @@ export class ServiceCollection {
     options?: { multiple?: boolean },
   ): this {
     const existing = this.descriptors.get(token) ?? [];
-    const multiple = options?.multiple ?? this.defaults.defaultMultiple ?? false;
+    const multiple =
+      options?.multiple ?? this.defaults.defaultMultiple ?? false;
     if (!multiple && !this.defaults.allowOverwrite && existing.length > 0) {
       throw new Error(
         `Service already registered for token ${String(token)}. Set allowOverwrite to true or use multiple registrations.`,

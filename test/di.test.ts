@@ -32,7 +32,10 @@ describe("Service lifetimes", () => {
   it("reuses singleton and disposes once", async () => {
     const dispose = vi.fn();
     const instance = { value: random(), dispose };
-    const services = new ServiceCollection().addSingleton("Singleton", instance);
+    const services = new ServiceCollection().addSingleton(
+      "Singleton",
+      instance,
+    );
     const provider = services.build();
 
     const a = provider.resolve<typeof instance>("Singleton");
@@ -127,11 +130,17 @@ describe("Resolution helpers", () => {
   it("supports multiple singleton registrations with keys", () => {
     const services = new ServiceCollection()
       .addSingleton("Repo", { name: "main" }, { multiple: true, key: "main" })
-      .addSingleton("Repo", { name: "shadow" }, { multiple: true, key: "shadow" });
+      .addSingleton(
+        "Repo",
+        { name: "shadow" },
+        { multiple: true, key: "shadow" },
+      );
     const provider = services.build();
     const main = provider.resolve<{ name: string }>("Repo", "main");
     expect(main.name).toBe("main");
-    const names = provider.resolveAll<{ name: string }>("Repo").map((r) => r.name);
+    const names = provider
+      .resolveAll<{ name: string }>("Repo")
+      .map((r) => r.name);
     expect(names).toEqual(["main", "shadow"]);
   });
 
@@ -175,7 +184,10 @@ describe("Resolution helpers", () => {
   });
 
   it("resolveAll on scope returns [] when none and values when registered", () => {
-    const services = new ServiceCollection().addScoped("Scoped", () => "scoped");
+    const services = new ServiceCollection().addScoped(
+      "Scoped",
+      () => "scoped",
+    );
     const provider = services.build();
     const scope = provider.createScope();
     expect(scope.resolveAll("Missing")).toEqual([]);
@@ -373,10 +385,9 @@ describe("Hono helpers", () => {
     const TYPES = { X: createToken<number>("x") };
     const middleware = bindToHono; // ensure tree-shaking avoids unused import
     expect(middleware).toBeDefined();
-    const proxy = (await import("../src/hono")).createContextDiProxy(
-      TYPES,
-      { strict: true },
-    );
+    const proxy = (await import("../src/hono")).createContextDiProxy(TYPES, {
+      strict: true,
+    });
     const ctx = { var: {}, set: () => {} };
     await expect(proxy(ctx as any, async () => {})).rejects.toThrow(
       /container is missing/,
@@ -434,14 +445,18 @@ describe("Hono helpers", () => {
     const scope = provider.createScope();
     const ctx: any = { var: { container: scope }, set: () => {} };
     await mw(ctx, async () => {});
-    expect(() => (ctx as any).di.Missing).toThrow(/Service token not registered/);
+    expect(() => (ctx as any).di.Missing).toThrow(
+      /Service token not registered/,
+    );
     await scope.dispose();
   });
 
   it("decorateContext throws when container missing", async () => {
     const mw = decorateContext({ Num: createToken<number>("num") });
     const ctx: any = { var: {}, set: () => {} };
-    await expect(mw(ctx, async () => {})).rejects.toThrow(/container is missing/);
+    await expect(mw(ctx, async () => {})).rejects.toThrow(
+      /container is missing/,
+    );
   });
 });
 
@@ -495,13 +510,10 @@ describe("async factories & resolveAsync", () => {
   it("reuses in-flight async singleton and throws on sync resolve", async () => {
     const calls: string[] = [];
     const services = new ServiceCollection();
-    services.addSingleton(
-      "Async",
-      async () => {
-        calls.push("build");
-        return { id: "value" };
-      },
-    );
+    services.addSingleton("Async", async () => {
+      calls.push("build");
+      return { id: "value" };
+    });
     const provider = services.build();
 
     const promise = provider.resolveAsync("Async");
@@ -652,16 +664,24 @@ describe("validateGraph", () => {
     const services = new ServiceCollection({ defaultMultiple: true });
     services.addTransient(MIXED, () => "base");
     services.addTransient(MIXED, () => "keyed", { key: "k" });
-    const diagnostics = services.build().validateGraph({ unusedTokens: [UNUSED] });
-    expect(diagnostics.some((d) => d.message.includes("mixes keyed"))).toBe(true);
-    expect(diagnostics.some((d) => d.message.includes("Unused token"))).toBe(true);
+    const diagnostics = services
+      .build()
+      .validateGraph({ unusedTokens: [UNUSED] });
+    expect(diagnostics.some((d) => d.message.includes("mixes keyed"))).toBe(
+      true,
+    );
+    expect(diagnostics.some((d) => d.message.includes("Unused token"))).toBe(
+      true,
+    );
   });
 
   it("enforces requireKeysForMultiple when requested", () => {
     const services = new ServiceCollection();
     services.addTransient("NoKey", () => "a", { multiple: true });
     services.addTransient("NoKey", () => "b", { multiple: true });
-    const diagnostics = services.build().validateGraph({ requireKeysForMultiple: true });
+    const diagnostics = services
+      .build()
+      .validateGraph({ requireKeysForMultiple: true });
     expect(diagnostics.some((d) => d.level === "error")).toBe(true);
   });
 });
@@ -755,7 +775,9 @@ describe("collection defaults and env helpers", () => {
   it("registers conditionally with ifTruthy", () => {
     process.env.ENABLE_FEATURE = "1";
     const services = new ServiceCollection();
-    ifTruthy(services, "ENABLE_FEATURE", (s) => s.addSingleton("Flagged", "on"));
+    ifTruthy(services, "ENABLE_FEATURE", (s) =>
+      s.addSingleton("Flagged", "on"),
+    );
     const provider = services.build();
     expect(provider.resolve("Flagged")).toBe("on");
 
@@ -861,7 +883,10 @@ describe("value provider with dispose", () => {
   it("calls custom dispose even when value is plain", async () => {
     const disposed: string[] = [];
     const services = new ServiceCollection();
-    services.addSingleton("Plain", { value: 1, dispose: () => disposed.push("x") });
+    services.addSingleton("Plain", {
+      value: 1,
+      dispose: () => disposed.push("x"),
+    });
     const provider = services.build();
     provider.resolve("Plain");
     await provider.dispose();
@@ -923,7 +948,9 @@ describe("useExisting & useClass", () => {
 
     const services = new ServiceCollection();
     services.addGlobalSingleton(Global, 11);
-    useExisting(services, Alias, Global, { lifetime: ServiceLifetime.GlobalSingleton });
+    useExisting(services, Alias, Global, {
+      lifetime: ServiceLifetime.GlobalSingleton,
+    });
     services.addScoped(Scoped, () => ({ id: 1 }));
     useClass(
       services,
@@ -950,10 +977,13 @@ describe("edge async resolution paths", () => {
   it("deduplicates global async singletons and rejects sync resolve while pending", async () => {
     const token = createToken<number>("globalAsync");
     let calls = 0;
-    const services = new ServiceCollection().addGlobalSingleton(token, async () => {
-      calls += 1;
-      return 99;
-    });
+    const services = new ServiceCollection().addGlobalSingleton(
+      token,
+      async () => {
+        calls += 1;
+        return 99;
+      },
+    );
     const provider = services.build();
     const p1 = provider.resolveAsync(token);
     const p2 = provider.resolveAsync(token);

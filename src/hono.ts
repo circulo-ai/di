@@ -16,10 +16,10 @@ type WithContainer<TContainer extends ServiceScope> = {
 
 export function createContainerMiddleware<
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
   provider: ServiceProvider,
-  options?: { variableName?: string }
+  options?: { variableName?: string },
 ): MiddlewareHandler<TEnv> {
   const variableName = options?.variableName ?? "container";
   return async (c, next) => {
@@ -36,7 +36,7 @@ export function createContainerMiddleware<
 export function resolveFromContext<
   T,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(c: Context<TEnv>, token: Token<T>, variableName = "container"): T {
   const container = (c.var as Record<string, unknown>)[variableName] as
     | TContainer
@@ -50,11 +50,11 @@ export function resolveFromContext<
 export function tryResolveFromContext<
   T,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
   c: Context<TEnv>,
   token: Token<T>,
-  variableName = "container"
+  variableName = "container",
 ): T | undefined {
   const container = (c.var as Record<string, unknown>)[variableName] as
     | TContainer
@@ -71,13 +71,13 @@ export type ContextWithServices<
   TTokens extends Record<string, Token>,
   TEnv extends Env = Env,
   P extends string = string,
-  I extends Input = {}
+  I extends Input = {},
 > = Context<TEnv, P, I> & { di: ServicesFromTokens<TTokens> };
 
 export function createContextDiProxy<
   TTokens extends Record<string, Token>,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
   tokens: TTokens,
   options?: {
@@ -103,7 +103,7 @@ export function createContextDiProxy<
      * Throw if a token is missing instead of returning undefined.
      */
     strict?: boolean;
-  }
+  },
 ): MiddlewareHandler<TEnv> {
   const variableName = options?.variableName ?? "container";
   const propertyName = options?.propertyName ?? "di";
@@ -135,12 +135,12 @@ export function createContextDiProxy<
 
 function createServiceProxy<
   TTokens extends Record<string, Token>,
-  TContainer extends ServiceScope = ServiceScope
+  TContainer extends ServiceScope = ServiceScope,
 >(
   container: TContainer,
   tokens: TTokens,
   cache: boolean,
-  strict: boolean
+  strict: boolean,
 ): ServicesFromTokens<TTokens> {
   const resolved = cache ? new Map<keyof TTokens, unknown>() : null;
 
@@ -174,7 +174,7 @@ function createServiceProxy<
 export function bindToHono<
   TTokens extends Record<string, Token>,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
   app: { use: (path: string, mw: MiddlewareHandler<TEnv>) => void },
   provider: ServiceProvider,
@@ -207,7 +207,7 @@ export function bindToHono<
 export function decorateContext<
   TTokens extends Record<string, Token>,
   TContainer extends ServiceScope = ServiceScope,
-  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>
+  TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
   tokens: TTokens,
   options?: { variableName?: string; targetVar?: string },
@@ -223,9 +223,7 @@ export function decorateContext<
     }
     const resolved: Record<string, unknown> = {};
     for (const [name, token] of Object.entries(tokens)) {
-      resolved[name] = await container.resolveAsync(
-        token as Token<unknown>,
-      );
+      resolved[name] = await container.resolveAsync(token as Token<unknown>);
     }
     c.set(targetVar as any, resolved as any);
     await next();

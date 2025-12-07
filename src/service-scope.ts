@@ -49,7 +49,7 @@ export class ServiceScope implements ServiceResolver {
 
   async tryResolveAsync<T>(
     token: TokenLike<T>,
-    key?: ServiceKey
+    key?: ServiceKey,
   ): Promise<T | undefined> {
     try {
       return await this.resolveAsync(token, key);
@@ -67,7 +67,7 @@ export class ServiceScope implements ServiceResolver {
   getOrCreate<T>(descriptor: ServiceDescriptor<T>): T {
     if (descriptor.lifetime !== ServiceLifetime.Scoped) {
       throw new Error(
-        `Descriptor for ${descriptor.token.toString()} is not scoped`
+        `Descriptor for ${descriptor.token.toString()} is not scoped`,
       );
     }
 
@@ -78,7 +78,7 @@ export class ServiceScope implements ServiceResolver {
     const instance = descriptor.factory(this);
     if (instance && typeof (instance as any).then === "function") {
       throw new AsyncFactoryError(
-        `Async factory detected for ${descriptor.token.toString()}. Use resolveAsync().`
+        `Async factory detected for ${descriptor.token.toString()}. Use resolveAsync().`,
       );
     }
     this.scopedInstances.set(descriptor, instance as T);
@@ -107,7 +107,7 @@ export class ServiceScope implements ServiceResolver {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     const handlers = [...this.disposeHandlers].sort(
-      (a, b) => b.priority - a.priority
+      (a, b) => b.priority - a.priority,
     );
     for (const handler of handlers) {
       await handler.fn();
@@ -118,16 +118,16 @@ export class ServiceScope implements ServiceResolver {
     await disposeMany(
       sortByPriorityAndOrder(
         instances,
-        (i) => i.descriptor.disposePriority
-      ).map((i) => i.instance as unknown)
+        (i) => i.descriptor.disposePriority,
+      ).map((i) => i.instance as unknown),
     );
     await disposeMany(
       sortByPriorityAndOrder(
         this.resolutionOrder
           .map((d) => ({ descriptor: d, dispose: d.customDispose }))
           .filter((d) => d.dispose),
-        (i) => i.descriptor.disposePriority
-      ).map((i) => i.dispose as DisposeFn)
+        (i) => i.descriptor.disposePriority,
+      ).map((i) => i.dispose as DisposeFn),
     );
     this.scopedInstances.clear();
     this.scopedPromises.clear();
@@ -152,7 +152,7 @@ export class ServiceScope implements ServiceResolver {
 
 function sortByPriorityAndOrder<T>(
   items: Array<T>,
-  prioritySelector: (item: T) => number
+  prioritySelector: (item: T) => number,
 ): T[] {
   return [...items].sort((a, b) => {
     const pa = prioritySelector(a);

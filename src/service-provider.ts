@@ -27,7 +27,10 @@ const GLOBAL_PROMISE_CACHE_KEY = Symbol.for("@circulo-ai/di:globals:promises");
 export class ServiceProvider implements ServiceResolver {
   private readonly descriptors: Map<Token, ServiceDescriptor[]>;
   private singletons = new WeakMap<ServiceDescriptor, unknown>();
-  private singletonPromises = new WeakMap<ServiceDescriptor, Promise<unknown>>();
+  private singletonPromises = new WeakMap<
+    ServiceDescriptor,
+    Promise<unknown>
+  >();
   private readonly singletonDescriptors = new Set<ServiceDescriptor>();
   private readonly singletonOrder: ServiceDescriptor[] = [];
   private readonly disposeHandlers: Array<{ fn: DisposeFn; priority: number }> =
@@ -140,8 +143,10 @@ export class ServiceProvider implements ServiceResolver {
       await handler.fn();
     }
 
-    const instances: Array<{ descriptor: ServiceDescriptor; instance: unknown }> =
-      [];
+    const instances: Array<{
+      descriptor: ServiceDescriptor;
+      instance: unknown;
+    }> = [];
     for (const descriptor of this.singletonOrder) {
       const value = this.singletons.get(descriptor);
       if (value !== undefined) {
@@ -149,9 +154,10 @@ export class ServiceProvider implements ServiceResolver {
       }
     }
     await disposeMany(
-      sortByPriorityAndOrder(instances, (i) => i.descriptor.disposePriority).map(
-        (i) => i.instance,
-      ),
+      sortByPriorityAndOrder(
+        instances,
+        (i) => i.descriptor.disposePriority,
+      ).map((i) => i.instance),
     );
     await disposeMany(
       sortByPriorityAndOrder(
@@ -211,7 +217,8 @@ export class ServiceProvider implements ServiceResolver {
               : `Multiple registrations for token ${tokenLabel(
                   token,
                 )} with key ${keyLabel(key)}; resolution is ambiguous.`;
-          const level: DiagnosticLevel = key === undefined ? "warning" : "error";
+          const level: DiagnosticLevel =
+            key === undefined ? "warning" : "error";
           diagnostics.push({ level, message, token, key });
         }
       }
@@ -455,7 +462,9 @@ export class ServiceProvider implements ServiceResolver {
 
     const frame: ResolutionFrame = { token, key: descriptor.key ?? key };
     if (stack.some((f) => isSameFrame(f, frame))) {
-      const chain = [...stack.map(formatFrame), formatFrame(frame)].join(" -> ");
+      const chain = [...stack.map(formatFrame), formatFrame(frame)].join(
+        " -> ",
+      );
       throw new CircularDependencyError(
         `Circular dependency detected: ${chain}`,
         [...stack, frame],
@@ -586,7 +595,8 @@ export async function disposeMany(services: unknown[]): Promise<void> {
       }
     } else if (typeof service === "function") {
       const result = service();
-      if (result instanceof Promise) disposals.push(result.then(() => undefined));
+      if (result instanceof Promise)
+        disposals.push(result.then(() => undefined));
     }
   }
   if (disposals.length) {
@@ -625,9 +635,10 @@ function isPromise<T>(value: unknown): value is Promise<T> {
   return typeof (value as any)?.then === "function";
 }
 
-function unwrapToken<T>(
-  token: TokenLike<T>,
-): { token: Token<T>; optional: boolean } {
+function unwrapToken<T>(token: TokenLike<T>): {
+  token: Token<T>;
+  optional: boolean;
+} {
   if (typeof token === "object" && (token as any).__optional) {
     return { token: (token as any).token, optional: true };
   }
