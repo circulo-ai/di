@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0
+
+### Minor Changes
+
+- 2b6380b: Minor updates
+
 ## 2.0.1
 
 ### Patch Changes
