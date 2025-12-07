@@ -1,5 +1,7 @@
 import type { ServiceCollection } from "./service-collection";
 import type { ServiceResolver, Token, TokenLike } from "./types";
+import type { ServiceProvider } from "./service-provider";
+import type { ServiceScope } from "./service-scope";
 import { ServiceLifetime } from "./lifetime";
 
 export function factory<T>(token: TokenLike<T>) {
@@ -66,5 +68,22 @@ function makeRegister(
     case ServiceLifetime.Transient:
     default:
       return services.addTransient.bind(services);
+  }
+}
+
+/**
+ * Runs a callback with a freshly created scope and disposes it afterwards.
+ * Useful outside of web middleware where you still want scoped lifetimes
+ * without manually creating/disposing the scope each time.
+ */
+export async function withScope<TScope extends ServiceScope = ServiceScope, TResult = unknown>(
+  provider: ServiceProvider,
+  work: (scope: TScope) => Promise<TResult>,
+): Promise<TResult> {
+  const scope = provider.createScope() as TScope;
+  try {
+    return await work(scope);
+  } finally {
+    await scope.dispose();
   }
 }
