@@ -1,4 +1,11 @@
+import {
+  AsyncFactoryError,
+  CircularDependencyError,
+  MissingServiceError,
+  ScopeResolutionError,
+} from "./errors";
 import { ServiceLifetime } from "./lifetime";
+import { ServiceScope } from "./service-scope";
 import type {
   Diagnostic,
   DiagnosticLevel,
@@ -11,13 +18,6 @@ import type {
   TokenLike,
   TraceEvent,
 } from "./types";
-import { ServiceScope } from "./service-scope";
-import {
-  AsyncFactoryError,
-  CircularDependencyError,
-  MissingServiceError,
-  ScopeResolutionError,
-} from "./errors";
 
 type ResolutionFrame = { token: Token; key?: ServiceKey };
 

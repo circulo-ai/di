@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
+import { describe, expect, it, vi } from "vitest";
 import {
   AsyncFactoryError,
   CircularDependencyError,
@@ -7,10 +7,8 @@ import {
   ScopeResolutionError,
   ServiceCollection,
   ServiceLifetime,
-  resolveFromContext,
-  tryResolveFromContext,
-  createContainerMiddleware,
   bindToHono,
+  createContainerMiddleware,
   createToken,
   decorateContext,
   factory,
@@ -19,6 +17,8 @@ import {
   ifTruthy,
   lazy,
   optional,
+  resolveFromContext,
+  tryResolveFromContext,
   useClass,
   useExisting,
 } from "../src";

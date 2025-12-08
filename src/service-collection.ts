@@ -1,4 +1,5 @@
 import { ServiceLifetime } from "./lifetime";
+import { ServiceProvider } from "./service-provider";
 import type {
   DisposeFn,
   ServiceDescriptor,
@@ -7,7 +8,6 @@ import type {
   Token,
   TraceEvent,
 } from "./types";
-import { ServiceProvider } from "./service-provider";
 
 export class ServiceCollection {
   constructor(
