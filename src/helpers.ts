@@ -1,8 +1,8 @@
+import { ServiceLifetime } from "./lifetime";
 import type { ServiceCollection } from "./service-collection";
-import type { ServiceResolver, Token, TokenLike } from "./types";
 import type { ServiceProvider } from "./service-provider";
 import type { ServiceScope } from "./service-scope";
-import { ServiceLifetime } from "./lifetime";
+import type { ServiceResolver, Token, TokenLike } from "./types";
 
 export function factory<T>(token: TokenLike<T>) {
   return (resolver: ServiceResolver) => () => resolver.resolve(token);

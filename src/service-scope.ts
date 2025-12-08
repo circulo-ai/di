@@ -1,14 +1,14 @@
+import { AsyncFactoryError } from "./errors";
 import { ServiceLifetime } from "./lifetime";
+import { disposeMany, ServiceProvider } from "./service-provider";
 import type {
-  ServiceDescriptor,
   DisposeFn,
+  ServiceDescriptor,
   ServiceKey,
   ServiceResolver,
   Token,
   TokenLike,
 } from "./types";
-import { disposeMany, ServiceProvider } from "./service-provider";
-import { AsyncFactoryError } from "./errors";
 
 export class ServiceScope implements ServiceResolver {
   private readonly scopedInstances = new Map<ServiceDescriptor, unknown>();
