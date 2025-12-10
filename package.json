@@ -41,7 +41,7 @@
     "dev": "tsc -p tsconfig.json --watch",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "prepack": "bun build",
+    "prepack": "bun run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
