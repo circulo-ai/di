@@ -128,7 +128,7 @@ await provider.dispose(); // cleans up singletons
 ## Developing
 
 ```bash
-bun --cwd packages/di run type-check
+bun --cwd packages/di run typecheck
 bun --cwd packages/di run build
 ```
 
