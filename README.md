@@ -5,6 +5,7 @@ A lightweight dependency injection toolkit with singleton, scoped, global-single
 ## What's Inside
 
 - **ServiceCollection**: Register services with lifetimes (`Singleton`, `GlobalSingleton`, `Scoped`, `Transient`), defaults (allowOverwrite/defaultMultiple), metadata (registeredAt/source), and dispose priorities.
+- **Binding DSL**: `services.bind(Token).toValue/toFunction/toFactory/toClass/toHigherOrderFunction` with array/object dependencies and `scope` aliases for lifetimes.
 - **ServiceProvider**: Root container with singleton/global caches, async-aware resolution, scopes, disposal hooks, tracing, and `withScope`.
 - **ServiceScope**: Per-request/per-operation scoped instances with disposal ordering and async caching.
 - **Hono Helpers**: `bindToHono` for one-liner setup; `decorateContext` for “put it on `c.var`”; strict/memoized proxies.
@@ -62,6 +63,17 @@ services.addSingleton("AsyncDb", async () => connectDb());
 const db = await provider.resolveAsync("AsyncDb");
 // provider.resolve("AsyncDb") will throw while the async factory is in-flight
 
+// Binding DSL with array/object deps and scope aliases
+services
+  .bind("Settings")
+  .toHigherOrderFunction(
+    (db, logger) => ({ db, logger }),
+    ["AsyncDb", TYPES.Logger],
+    { scope: "scoped", async: true },
+  );
+services.bind("Static").toValue("hi");
+services.bind(TYPES.Logger).toClass(Logger);
+
 // Factory/lazy helpers
 services.addTransient("DbFactory", factory("AsyncDb"));
 services.addScoped("LazyConfig", lazy("Config"));
@@ -87,6 +99,96 @@ app.get("/ping", (c) => {
     viaVar: (c.var as any).svc.RequestId,
   });
 });
+```
+
+## Real-world examples
+
+### Next.js App Route (Node/Edge)
+
+```ts
+// app/api/users/route.ts
+import {
+  getGlobalProvider,
+  withRequestScope,
+  ServiceCollection,
+} from "@circulo-ai/di";
+import { NextRequest } from "next/server";
+
+const TYPES = { Db: "Db", Logger: "Logger" } as const;
+
+// Reuse across hot reloads and edge invocations
+const provider = getGlobalProvider(() => {
+  const services = new ServiceCollection();
+  services
+    .bind(TYPES.Db)
+    .toHigherOrderFunction(() => createPool(), [], { scope: "global" });
+  services
+    .bind(TYPES.Logger)
+    .toFactory(() => createRequestLogger(), { scope: "scoped" });
+  return services.build();
+});
+
+export const GET = withRequestScope(
+  provider,
+  async (_req: NextRequest, ctx) => {
+    const db = await ctx.container.resolveAsync(TYPES.Db);
+    const logger = ctx.container.resolve(TYPES.Logger);
+    const rows = await db.query("select * from users");
+    logger.info("users fetched", { count: rows.length });
+    return Response.json({ users: rows });
+  },
+);
+```
+
+### Modular feature wiring
+
+```ts
+// user.module.ts
+import { createModule } from "@circulo-ai/di";
+export const TYPES = { UserRepo: "UserRepo", GetUser: "GetUser" } as const;
+export const userModule = createModule()
+  .bind(TYPES.UserRepo)
+  .toClass(UserRepository, { db: "Db" })
+  .bind(TYPES.GetUser)
+  .toHigherOrderFunction(
+    (repo) => (id: string) => repo.findById(id),
+    [TYPES.UserRepo],
+  );
+
+// app container
+import { ServiceCollection } from "@circulo-ai/di";
+import { userModule, TYPES as USER } from "./user.module";
+
+const services = new ServiceCollection()
+  .addGlobalSingleton("Db", () => createPool(), { disposePriority: 10 })
+  .addModule(userModule);
+
+const provider = services.build();
+const scope = provider.createScope();
+await scope.resolveAsync(USER.GetUser)("123");
+```
+
+### Background job scope with disposals
+
+```ts
+import { ServiceCollection } from "@circulo-ai/di";
+
+const TYPES = { Queue: "Queue", JobLogger: "JobLogger" } as const;
+const services = new ServiceCollection()
+  .addGlobalSingleton(TYPES.Queue, () => connectQueue(), { disposePriority: 5 })
+  .bind(TYPES.JobLogger)
+  .toFactory(() => createJobLogger(), { scope: "scoped" });
+
+const provider = services.build();
+
+export async function handleJob(payload: any) {
+  return provider.withScope(async (scope) => {
+    const queue = scope.resolve(TYPES.Queue);
+    const log = scope.resolve(TYPES.JobLogger);
+    log.info("processing job", payload);
+    await queue.ack(payload.id);
+  });
+}
 ```
 
 ## Lifetimes

@@ -1,8 +1,8 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { Env, Input } from "hono/types";
-import { ServiceProvider } from "./service-provider";
-import type { ServiceScope } from "./service-scope";
-import type { Token } from "./types";
+import { ServiceProvider } from "../core/service-provider";
+import type { ServiceScope } from "../core/service-scope";
+import type { Token } from "../core/types";
 
 export type ContainerEnv<TContainer extends ServiceScope = ServiceScope> = {
   Variables: {

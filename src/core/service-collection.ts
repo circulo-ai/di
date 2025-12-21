@@ -1,6 +1,9 @@
+import { createBinder, scopeToLifetime } from "../binding/binding";
+import type { ServiceModule } from "../binding/module";
 import { ServiceLifetime } from "./lifetime";
 import { ServiceProvider } from "./service-provider";
 import type {
+  BindingOptions,
   DisposeFn,
   ServiceDescriptor,
   ServiceFactory,
@@ -20,6 +23,21 @@ export class ServiceCollection {
   ) {}
 
   private readonly descriptors = new Map<Token, ServiceDescriptor[]>();
+
+  bind<T>(token: Token<T>) {
+    return createBinder(
+      <U>(
+        innerToken: Token<U>,
+        factory: ServiceFactory<U>,
+        options?: BindingOptions,
+      ) => this.addBinding(innerToken, factory, options),
+    )(token);
+  }
+
+  addModule(module: ServiceModule): this {
+    module.applyTo(this);
+    return this;
+  }
 
   addSingleton<T>(
     token: Token<T>,
@@ -198,6 +216,38 @@ export class ServiceCollection {
       this.descriptors.set(token, [descriptor]);
     }
     return this;
+  }
+
+  /**
+   * Internal: used by binder/module helpers.
+   */
+  addBinding<T>(
+    token: Token<T>,
+    factory: ServiceFactory<T>,
+    options?: BindingOptions,
+  ): this {
+    const lifetime =
+      options?.lifetime ??
+      scopeToLifetime(options?.scope) ??
+      ServiceLifetime.Singleton;
+    const registration = {
+      key: options?.key,
+      multiple: options?.multiple,
+      disposePriority: options?.disposePriority,
+      globalKey: options?.globalKey,
+      source: options?.source,
+    };
+    switch (lifetime) {
+      case ServiceLifetime.GlobalSingleton:
+        return this.addGlobalSingleton(token, factory, registration);
+      case ServiceLifetime.Scoped:
+        return this.addScoped(token, factory, registration);
+      case ServiceLifetime.Transient:
+        return this.addTransient(token, factory, registration);
+      case ServiceLifetime.Singleton:
+      default:
+        return this.addSingleton(token, factory, registration);
+    }
   }
 
   private captureSource(): string | undefined {

@@ -13,6 +13,37 @@ export type OptionalToken<T = unknown> = {
 export type TokenLike<T = unknown> = Token<T> | OptionalToken<T>;
 export type ServiceKey = string | number | symbol;
 
+export type BindingScope =
+  | "singleton"
+  | "global"
+  | "globalSingleton"
+  | "scoped"
+  | "transient";
+
+export type BindingOptions = {
+  /**
+   * Scope/lifetime of the binding. Defaults to "singleton".
+   */
+  scope?: BindingScope;
+  /**
+   * Explicit lifetime; overrides `scope` when provided.
+   */
+  lifetime?: ServiceLifetime;
+  key?: ServiceKey;
+  multiple?: boolean;
+  disposePriority?: number;
+  globalKey?: string;
+  source?: string;
+  /**
+   * If true, dependency resolution inside binder helpers will use
+   * `resolveAsync`/`Promise.all` and return a promise from the factory.
+   */
+  async?: boolean;
+};
+
+export type DependencyArray = readonly TokenLike[];
+export type DependencyObject = Readonly<Record<string, TokenLike>>;
+
 export type DiagnosticLevel = "warning" | "error";
 export type Diagnostic = {
   level: DiagnosticLevel;

@@ -1,4 +1,4 @@
-import type { ServiceCollection } from "./service-collection";
+import type { ServiceCollection } from "../core/service-collection";
 
 type RegisterFn = (services: ServiceCollection) => void;
 

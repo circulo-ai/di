@@ -49,10 +49,26 @@ await provider.withScope(async (scope) => {
 
 - `useExisting(services, Alias, Source, { lifetime, key })`: alias another token, optionally keyed/multiple.
 - `useClass(services, Token, Klass, { lifetime, key })`: construct class.
+- `services.bind(Token)`: fluent DSL `toValue/toFunction/toFactory/toClass/toHigherOrderFunction` with array/object deps and `scope` aliases (`singleton|global|scoped|transient`).
 - `factory(token)`: inject a resolver function to fetch a token on-demand.
 - `lazy(token)`: memoized thunk per scope.
 - `ifProd/ifDev/ifTruthy(envVar)`: conditional registration helpers.
 - Value providers with disposal: `addSingleton(token, { value, dispose|close|destroy })`.
+
+## Binding DSL
+
+```ts
+services
+  .bind("Clock")
+  .toHigherOrderFunction((deps) => () => deps.start, { start: "Start" });
+services
+  .bind("ScopedSettings")
+  .toHigherOrderFunction((db, cache) => ({ db, cache }), ["Db", "Cache"], {
+    scope: "scoped",
+    async: true,
+  });
+services.bind(Logger).toClass(Logger, { sink: "Sink" });
+```
 
 ## Lifetimes & disposal
 
@@ -89,6 +105,93 @@ await provider.withScope(async (scope) => {
 - `bindToHono(app, provider, tokens, { var, prop, cache, strict })`: installs both middleware in one call.
 - `decorateContext(tokens, { variableName, targetVar })`: eagerly resolve and attach to `c.var`.
 - `resolveFromContext/tryResolveFromContext(ctx, token, variableName?)`: fetch services from context.
+
+## Next.js helpers
+
+- `getGlobalProvider(factory, key?)`: memoize a provider on `globalThis` to survive hot reloads.
+- `withRequestScope(provider, handler, { containerProp })`: wrap a handler so each call gets a scoped container injected on context and disposed automatically.
+
+## Real-world examples
+
+### Next.js route handler
+
+```ts
+// app/api/health/route.ts
+import {
+  getGlobalProvider,
+  withRequestScope,
+  ServiceCollection,
+} from "@circulo-ai/di";
+
+const TYPES = { Db: "Db", Logger: "Logger" } as const;
+
+const provider = getGlobalProvider(() => {
+  const services = new ServiceCollection();
+  services
+    .bind(TYPES.Db)
+    .toHigherOrderFunction(() => createPool(), [], { scope: "global" });
+  services
+    .bind(TYPES.Logger)
+    .toFactory(() => createRequestLogger(), { scope: "scoped" });
+  return services.build();
+});
+
+export const GET = withRequestScope(provider, async (_req, ctx) => {
+  const db = await ctx.container.resolveAsync(TYPES.Db);
+  const logger = ctx.container.resolve(TYPES.Logger);
+  const [{ now }] = await db.query("select now()");
+  logger.info("healthcheck");
+  return Response.json({ ok: true, now });
+});
+```
+
+### Feature module composition
+
+```ts
+// notifications.module.ts
+import { createModule } from "@circulo-ai/di";
+export const TYPES = { Sender: "Sender", NotifyUser: "NotifyUser" } as const;
+
+export const notifications = createModule()
+  .bind(TYPES.Sender)
+  .toHigherOrderFunction((deps) => new EmailSender(deps.config), {
+    config: "Config",
+  })
+  .bind(TYPES.NotifyUser)
+  .toHigherOrderFunction(
+    (sender) => async (userId: string, message: string) =>
+      sender.send(userId, message),
+    [TYPES.Sender],
+  );
+
+// main container
+const services = new ServiceCollection()
+  .addSingleton("Config", loadConfig())
+  .addModule(notifications);
+const provider = services.build();
+await provider.resolve(TYPES.NotifyUser)("123", "hi");
+```
+
+### Background worker scope
+
+```ts
+const TYPES = { Queue: "Queue", JobLogger: "JobLogger" } as const;
+const services = new ServiceCollection()
+  .addGlobalSingleton(TYPES.Queue, () => connectQueue())
+  .bind(TYPES.JobLogger)
+  .toFactory(() => createJobLogger(), { scope: "scoped" });
+
+const provider = services.build();
+
+export async function handleJob(job: Job) {
+  return provider.withScope(async (scope) => {
+    const queue = scope.resolve(TYPES.Queue);
+    const log = scope.resolve(TYPES.JobLogger);
+    log.info("processing", { id: job.id });
+    await queue.ack(job.id);
+  });
+}
+```
 
 ## Guards & graph safety
 

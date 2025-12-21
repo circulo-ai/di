@@ -7,11 +7,14 @@ import {
   ScopeResolutionError,
   ServiceCollection,
   ServiceLifetime,
+  ServiceScope,
   bindToHono,
   createContainerMiddleware,
+  createModule,
   createToken,
   decorateContext,
   factory,
+  getGlobalProvider,
   ifDev,
   ifProd,
   ifTruthy,
@@ -21,6 +24,7 @@ import {
   tryResolveFromContext,
   useClass,
   useExisting,
+  withRequestScope,
 } from "../src";
 
 const random = () => Math.random();
@@ -385,7 +389,9 @@ describe("Hono helpers", () => {
     const TYPES = { X: createToken<number>("x") };
     const middleware = bindToHono; // ensure tree-shaking avoids unused import
     expect(middleware).toBeDefined();
-    const proxy = (await import("../src/hono")).createContextDiProxy(TYPES, {
+    const proxy = (
+      await import("../src/integration/hono")
+    ).createContextDiProxy(TYPES, {
       strict: true,
     });
     const ctx = { var: {}, set: () => {} };
@@ -401,10 +407,9 @@ describe("Hono helpers", () => {
       return Math.random();
     });
     const provider = services.build();
-    const proxyMw = (await import("../src/hono")).createContextDiProxy(
-      { Cached: "Cached" as any },
-      { cache: true },
-    );
+    const proxyMw = (
+      await import("../src/integration/hono")
+    ).createContextDiProxy({ Cached: "Cached" as any }, { cache: true });
     const scope = provider.createScope();
     const ctx: any = {
       var: { container: scope },
@@ -422,7 +427,9 @@ describe("Hono helpers", () => {
   it("returns undefined for unknown or symbol properties on proxy", async () => {
     const services = new ServiceCollection().addSingleton("Value", 5);
     const provider = services.build();
-    const proxyMw = (await import("../src/hono")).createContextDiProxy({
+    const proxyMw = (
+      await import("../src/integration/hono")
+    ).createContextDiProxy({
       Value: "Value" as any,
     });
     const scope = provider.createScope();
@@ -441,7 +448,9 @@ describe("Hono helpers", () => {
     const tokens = { Missing: undefined as any };
     const services = new ServiceCollection().addSingleton("Any", 1);
     const provider = services.build();
-    const mw = (await import("../src/hono")).createContextDiProxy(tokens);
+    const mw = (await import("../src/integration/hono")).createContextDiProxy(
+      tokens,
+    );
     const scope = provider.createScope();
     const ctx: any = { var: { container: scope }, set: () => {} };
     await mw(ctx, async () => {});
@@ -1064,6 +1073,109 @@ describe("edge async resolution paths", () => {
     expect(result.resolvedAsync).toBe(1);
     expect(result.maybeAsync).toBeUndefined();
     expect(result.all).toEqual([1]);
+  });
+});
+
+describe("binding DSL and modules", () => {
+  it("binds values, functions, and classes with dependency objects", () => {
+    class WithDeps {
+      constructor(public deps: { bar: string; id: number }) {}
+    }
+    const services = new ServiceCollection();
+    services.bind("Value").toValue(42);
+    services.bind("Fn").toFunction(() => "fn");
+    services.bind("Bar").toValue("bar");
+    services.bind("Id").toValue(7);
+    services
+      .bind(WithDeps)
+      .toClass(
+        WithDeps,
+        { bar: "Bar", id: "Id" },
+        { lifetime: ServiceLifetime.Transient },
+      );
+
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    expect(provider.resolve("Value")).toBe(42);
+    expect(provider.resolve<() => string>("Fn")()).toBe("fn");
+    const instance = scope.resolve(WithDeps);
+    expect(instance.deps.bar).toBe("bar");
+    expect(instance.deps.id).toBe(7);
+  });
+
+  it("supports scoped lifetime via scope alias", () => {
+    const services = new ServiceCollection();
+    services
+      .bind("ScopedValue")
+      .toFactory(() => ({ id: Math.random() }), { scope: "scoped" });
+    const provider = services.build();
+    const scope1 = provider.createScope();
+    const scope2 = provider.createScope();
+    const a = scope1.resolve<{ id: number }>("ScopedValue");
+    const b = scope1.resolve<{ id: number }>("ScopedValue");
+    const c = scope2.resolve<{ id: number }>("ScopedValue");
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("resolves async higher-order bindings when async flag is set", async () => {
+    const services = new ServiceCollection();
+    services.addSingleton("AsyncDep", async () => "dep");
+    services
+      .bind("Ho")
+      .toHigherOrderFunction((dep: string) => `${dep}!`, ["AsyncDep"], {
+        async: true,
+      });
+    const provider = services.build();
+    await expect(provider.resolveAsync("Ho")).resolves.toBe("dep!");
+  });
+
+  it("applies modules with binders", () => {
+    const module = createModule();
+    module.bind("Modded").toValue("mod");
+    const services = new ServiceCollection().addModule(module);
+    const provider = services.build();
+    expect(provider.resolve("Modded")).toBe("mod");
+  });
+});
+
+describe("next helpers", () => {
+  it("reuses provider across calls with getGlobalProvider", () => {
+    const key = Symbol("provider-key");
+    const services = new ServiceCollection().addSingleton("Value", 1);
+    const provider = getGlobalProvider(() => services.build(), key);
+    const provider2 = getGlobalProvider(() => services.build(), key);
+    expect(provider).toBe(provider2);
+    expect(provider.resolve("Value")).toBe(1);
+  });
+
+  it("wraps handlers with per-request scopes", async () => {
+    const services = new ServiceCollection();
+    let disposed = 0;
+    services.addScoped("Scoped", () => ({
+      id: Math.random(),
+      dispose: () => {
+        disposed += 1;
+      },
+    }));
+    const provider = services.build();
+
+    const handler = withRequestScope<
+      ServiceScope,
+      { id: number },
+      { params: Record<string, unknown> },
+      { ok: boolean }
+    >(provider, async (_req, ctx) => {
+      const first = ctx.container.resolve<{ id: number }>("Scoped");
+      const second = ctx.container.resolve<{ id: number }>("Scoped");
+      expect(first).toBe(second);
+      return { ok: true };
+    });
+
+    const result = await handler({ id: 1 }, { params: {} });
+    expect((result as any).ok).toBe(true);
+    expect(disposed).toBe(1);
   });
 });
 
