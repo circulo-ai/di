@@ -1,6 +1,6 @@
 {
   "name": "@circulo-ai/di",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
