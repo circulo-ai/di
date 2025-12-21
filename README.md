@@ -79,6 +79,37 @@ services.addTransient("DbFactory", factory("AsyncDb"));
 services.addScoped("LazyConfig", lazy("Config"));
 ```
 
+## Fundamentals & best practices
+
+- **Pick the right lifetime**: `GlobalSingleton` for expensive process-wide things (DB pools); `Singleton` for app-level caches; `Scoped` per request/task; `Transient` for pure, cheap objects. Avoid scoped resolution from the root—always resolve through a scope/middleware.
+- **Prefer tokens over strings**: `createToken<T>("Name")` keeps types tight and avoids collision. Use `optional(token)` for soft dependencies.
+- **Binder DSL for ergonomic wiring**: `bind(Token).toValue|toFactory|toClass|toHigherOrderFunction` with array/object deps; use `scope` for lifetimes and `{ async: true }` when dep factories are async.
+- **Keyed multi-bindings**: set `{ multiple: true, key: "primary" }` and use `resolveMap` for clarity; avoid mixing keyed/unkeyed for the same token.
+- **Async factories**: always resolve with `resolveAsync`; sync resolve will throw while in flight. Use `factory(token)` to inject lazy calls and `lazy(token)` to memoize per scope.
+- **Dispose eagerly**: wrap work in `provider.withScope` or `withRequestScope` (Next) and call `provider.dispose()` on shutdown. Add `disposePriority` for ordered teardown.
+- **Modules for features**: group registrations with `createModule().bind(...).to...` and `services.addModule(module)` to keep domains isolated.
+- **Environment guards**: wrap optional services with `ifProd/ifDev/ifTruthy` to keep registration clean.
+- **Validate and trace**: run `provider.validateGraph({ throwOnError: true })` locally to catch duplicates/missing tokens; pass `trace` to `ServiceCollection` to log resolution paths during debugging.
+- **Testing overrides**: set `allowOverwrite: true` in tests, re-register tokens with fakes, or compose a new `ServiceCollection` per test. Use `useExisting` to alias mocks without changing consumers.
+- **Hot-reload safety**: prefer `GlobalSingleton` or `getGlobalProvider` in dev servers/Next.js to avoid duplicate pools; keep disposers on value providers for clean reloads.
+- **Edge vs Node**: on Edge runtimes, avoid `globalThis` if not needed; prefer scoped lifetimes and per-request factories for lightweight objects.
+- **Avoid hidden singletons**: keep most services scoped/transient and only elevate to singleton/global when necessary; use `trace` to spot unintended sharing.
+
+```ts
+// Lifetime + binder examples
+services
+  .bind(createToken<Pool>("Db"))
+  .toHigherOrderFunction(() => createPool(), [], { scope: "global" });
+services
+  .bind(createToken<RequestLogger>("Logger"))
+  .toFactory((r) => makeRequestLogger(r.resolve("RequestId")), { scope: "scoped" });
+services
+  .bind(createToken<Feature>("Feature"))
+  .toHigherOrderFunction((deps) => new Feature(deps), { config: "Config" });
+
+provider.validateGraph({ throwOnError: true });
+```
+
 ## Hono Integration
 
 ```ts
