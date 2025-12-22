@@ -8,5 +8,6 @@ export * from "./core/tokens";
 export * from "./core/types";
 export * from "./helpers/env";
 export * from "./helpers/helpers";
+export * from "./helpers/locator";
 export * from "./integration/hono";
 export * from "./integration/next";

@@ -10,6 +10,7 @@ import {
   ServiceScope,
   bindToHono,
   createContainerMiddleware,
+  createServiceLocator,
   createModule,
   createToken,
   decorateContext,
@@ -207,6 +208,103 @@ describe("Resolution helpers", () => {
     const scope = provider.createScope();
     expect(scope.resolveAll("Scoped")).toEqual(["one", "two"]);
     expect(scope.resolve("Scoped", "two")).toBe("two");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service locator
+// ---------------------------------------------------------------------------
+describe("Service locator", () => {
+  it("does not memoize transient tokens by default", () => {
+    const services = new ServiceCollection().addTransient("Transient", () => ({
+      value: random(),
+    }));
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    const locator = createServiceLocator(scope, {
+      Transient: "Transient",
+    });
+
+    const first = locator.Transient;
+    const second = locator.Transient;
+
+    expect(first).not.toBe(second);
+  });
+
+  it("memoizes when cache is enabled", () => {
+    const services = new ServiceCollection().addTransient("Transient", () => ({
+      value: random(),
+    }));
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    const locator = createServiceLocator(
+      scope,
+      { Transient: "Transient" },
+      { cache: true },
+    );
+
+    const first = locator.Transient;
+    const second = locator.Transient;
+
+    expect(first).toBe(second);
+  });
+
+  it("throws on unknown properties when strict is enabled", () => {
+    const services = new ServiceCollection().addSingleton("Value", 1);
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    const locator = createServiceLocator(
+      scope,
+      { Value: "Value" },
+      { strict: true },
+    );
+
+    expect(() => (locator as any).Missing).toThrow(
+      /Service token not registered/,
+    );
+  });
+
+  it("ignores prototype properties", () => {
+    const services = new ServiceCollection().addSingleton("Value", 1);
+    const provider = services.build();
+    const resolveSpy = vi.spyOn(provider, "resolve");
+
+    const locator = createServiceLocator(provider, { Value: "Value" });
+
+    expect((locator as any).toString).toBeUndefined();
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+
+  it("avoids cache collisions for dotted keys", () => {
+    const services = new ServiceCollection()
+      .addSingleton("Flat", "flat")
+      .addSingleton("Nested", "nested");
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    const locator = createServiceLocator(
+      scope,
+      { "a.b": "Flat", a: { b: "Nested" } },
+      { cache: true },
+    );
+
+    expect(locator["a.b"]).toBe("flat");
+    expect(locator.a.b).toBe("nested");
+  });
+
+  it("supports optional tokens", () => {
+    const services = new ServiceCollection();
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    const locator = createServiceLocator(scope, {
+      Optional: optional("Missing"),
+    });
+
+    expect(locator.Optional).toBeUndefined();
   });
 });
 
@@ -441,6 +539,24 @@ describe("Hono helpers", () => {
     const di = (ctx as any).di as any;
     expect(di[Symbol.toStringTag]).toBeUndefined();
     expect(di.Missing).toBeUndefined();
+    await scope.dispose();
+  });
+
+  it("throws for unknown properties when strict is enabled", async () => {
+    const services = new ServiceCollection().addSingleton("Value", 5);
+    const provider = services.build();
+    const proxyMw = (
+      await import("../src/integration/hono")
+    ).createContextDiProxy({ Value: "Value" as any }, { strict: true });
+    const scope = provider.createScope();
+    const ctx: any = {
+      var: { container: scope },
+      set: (k: string, v: unknown) => ((ctx.var as any)[k] = v),
+    };
+    await proxyMw(ctx, async () => {});
+    expect(() => (ctx as any).di.Missing).toThrow(
+      /Service token not registered/,
+    );
     await scope.dispose();
   });
 

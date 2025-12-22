@@ -98,6 +98,40 @@ services.bind(Logger).toClass(Logger, { sink: "Sink" });
 - Tracing: pass `trace(event)` to `ServiceCollection` defaults to observe `{ token, key, lifetime, path, async }`.
 - Metadata: descriptors include `registeredAt` and optional `source` (when `captureStack` enabled).
 
+## Service locator helper
+
+- `createServiceLocator(resolver, tokens, { cache, strict })`: returns a typed proxy that lazily resolves tokens from a nested token tree.
+- `cache` memoizes per-property lookups; keep it `false` to preserve transient semantics.
+- `strict` throws when an unknown property is accessed.
+
+```ts
+import {
+  ServiceCollection,
+  createServiceLocator,
+  createToken,
+  optional,
+} from "@circulo-ai/di";
+
+const TYPES = {
+  Config: createToken<{ port: number }>("Config"),
+  Db: createToken<{ query: (sql: string) => Promise<unknown> }>("Db"),
+} as const;
+
+const services = new ServiceCollection()
+  .addSingleton(TYPES.Config, { port: 3000 })
+  .addSingleton(TYPES.Db, () => ({ query: async (_sql: string) => [] }));
+
+const provider = services.build();
+const scope = provider.createScope();
+const di = createServiceLocator(scope, {
+  config: TYPES.Config,
+  db: { primary: TYPES.Db, cache: optional("Cache") },
+});
+
+di.config;
+di.db.primary;
+```
+
 ## Hono integration
 
 - `createContainerMiddleware(provider, { variableName })`: attaches a new scope to each request.

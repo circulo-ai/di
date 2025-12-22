@@ -9,6 +9,7 @@ A lightweight dependency injection toolkit with singleton, scoped, global-single
 - **ServiceProvider**: Root container with singleton/global caches, async-aware resolution, scopes, disposal hooks, tracing, and `withScope`.
 - **ServiceScope**: Per-request/per-operation scoped instances with disposal ordering and async caching.
 - **Hono Helpers**: `bindToHono` for one-liner setup; `decorateContext` for “put it on `c.var`”; strict/memoized proxies.
+- **Service Locator**: `createServiceLocator` for typed, lazily-resolved proxies from nested token trees.
 - **Tokens**: `createToken`, `optional(token)` for optional resolution; keyed/multi registrations; `resolveMap` for keyed lookups; `factory`/`lazy` helpers.
 - **Diagnostics**: `validateGraph`, runtime circular detection, structured errors with path/token.
 - **Conditional registration**: `ifProd`, `ifDev`, `ifTruthy`.
@@ -77,6 +78,41 @@ services.bind(TYPES.Logger).toClass(Logger);
 // Factory/lazy helpers
 services.addTransient("DbFactory", factory("AsyncDb"));
 services.addScoped("LazyConfig", lazy("Config"));
+```
+
+## Service locator helper
+
+```ts
+import {
+  ServiceCollection,
+  createServiceLocator,
+  createToken,
+  optional,
+} from "@circulo-ai/di";
+
+const TYPES = {
+  Config: createToken<{ port: number }>("Config"),
+  Db: createToken<{ query: (sql: string) => Promise<unknown> }>("Db"),
+} as const;
+
+const services = new ServiceCollection()
+  .addSingleton(TYPES.Config, { port: 3000 })
+  .addSingleton(TYPES.Db, () => ({ query: async (_sql: string) => [] }));
+
+const provider = services.build();
+const scope = provider.createScope();
+const locator = createServiceLocator(
+  scope,
+  {
+    config: TYPES.Config,
+    db: { primary: TYPES.Db, cache: optional("Cache") },
+  },
+  { cache: false, strict: true },
+);
+
+const config = locator.config;
+const db = locator.db.primary;
+const maybeCache = locator.db.cache;
 ```
 
 ## Fundamentals & best practices

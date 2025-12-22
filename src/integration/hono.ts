@@ -3,6 +3,8 @@ import type { Env, Input } from "hono/types";
 import { ServiceProvider } from "../core/service-provider";
 import type { ServiceScope } from "../core/service-scope";
 import type { Token } from "../core/types";
+import type { ResolvedServices, TokenTree } from "../helpers/locator";
+import { createServiceLocator } from "../helpers/locator";
 
 export type ContainerEnv<TContainer extends ServiceScope = ServiceScope> = {
   Variables: {
@@ -63,19 +65,18 @@ export function tryResolveFromContext<
   return container.tryResolve(token);
 }
 
-export type ServicesFromTokens<TTokens extends Record<string, Token>> = {
-  [K in keyof TTokens]: TTokens[K] extends Token<infer T> ? T : unknown;
-};
+export type ServicesFromTokens<TTokens extends TokenTree> =
+  ResolvedServices<TTokens>;
 
 export type ContextWithServices<
-  TTokens extends Record<string, Token>,
+  TTokens extends TokenTree,
   TEnv extends Env = Env,
   P extends string = string,
   I extends Input = {},
 > = Context<TEnv, P, I> & { di: ServicesFromTokens<TTokens> };
 
 export function createContextDiProxy<
-  TTokens extends Record<string, Token>,
+  TTokens extends TokenTree,
   TContainer extends ServiceScope = ServiceScope,
   TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
@@ -120,7 +121,7 @@ export function createContextDiProxy<
 
     const current = (c as unknown as Record<string, unknown>)[propertyName];
     if (!current) {
-      const proxy = createServiceProxy(container, tokens, cache, strict);
+      const proxy = createServiceLocator(container, tokens, { cache, strict });
       Object.defineProperty(c, propertyName, {
         value: proxy,
         enumerable: false,
@@ -133,46 +134,8 @@ export function createContextDiProxy<
   };
 }
 
-function createServiceProxy<
-  TTokens extends Record<string, Token>,
-  TContainer extends ServiceScope = ServiceScope,
->(
-  container: TContainer,
-  tokens: TTokens,
-  cache: boolean,
-  strict: boolean,
-): ServicesFromTokens<TTokens> {
-  const resolved = cache ? new Map<keyof TTokens, unknown>() : null;
-
-  return new Proxy({} as ServicesFromTokens<TTokens>, {
-    get(_target, prop: string | symbol) {
-      if (typeof prop !== "string") return undefined;
-      if (!Object.prototype.hasOwnProperty.call(tokens, prop)) return undefined;
-
-      const key = prop as keyof TTokens;
-      if (resolved?.has(key)) {
-        return resolved.get(key) as ServicesFromTokens<TTokens>[typeof key];
-      }
-
-      const token = tokens[key];
-      if (!token) {
-        throw new Error(`Service token not registered for "${prop}".`);
-      }
-
-      const value = container.resolve(
-        token as Token<ServicesFromTokens<TTokens>[typeof key]>,
-      );
-      if (resolved) {
-        resolved.set(key, value);
-      }
-
-      return value as ServicesFromTokens<TTokens>[typeof key];
-    },
-  });
-}
-
 export function bindToHono<
-  TTokens extends Record<string, Token>,
+  TTokens extends TokenTree,
   TContainer extends ServiceScope = ServiceScope,
   TEnv extends WithContainer<TContainer> = ContainerEnv<TContainer>,
 >(
@@ -189,7 +152,7 @@ export function bindToHono<
 ): void {
   const variableName = options?.var ?? "container";
   const propertyName = options?.prop ?? "di";
-  const cache = options?.memoize ?? options?.cache ?? true;
+  const cache = options?.memoize ?? options?.cache ?? false;
   const strict = options?.strict ?? false;
 
   app.use("*", createContainerMiddleware(provider, { variableName }));
