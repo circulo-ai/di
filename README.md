@@ -88,7 +88,7 @@ import {
   createServiceLocator,
   createToken,
   optional,
-} from "@circulo-ai/di";
+} from "@circulo-ai/di"; 
 
 const TYPES = {
   Config: createToken<{ port: number }>("Config"),
@@ -138,7 +138,9 @@ services
   .toHigherOrderFunction(() => createPool(), [], { scope: "global" });
 services
   .bind(createToken<RequestLogger>("Logger"))
-  .toFactory((r) => makeRequestLogger(r.resolve("RequestId")), { scope: "scoped" });
+  .toFactory((r) => makeRequestLogger(r.resolve("RequestId")), {
+    scope: "scoped",
+  });
 services
   .bind(createToken<Feature>("Feature"))
   .toHigherOrderFunction((deps) => new Feature(deps), { config: "Config" });
