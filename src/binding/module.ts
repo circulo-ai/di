@@ -1,6 +1,6 @@
-import type { ServiceCollection } from "../core/service-collection";
-import type { BindingOptions, Token } from "../core/types";
-import { createBinder } from "./binding";
+import type { ServiceCollection } from "../core/service-collection.js";
+import type { BindingOptions, Token } from "../core/types.js";
+import { createBinder } from "./binding.js";
 
 type ModuleAction = (services: ServiceCollection) => void;
 

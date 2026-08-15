@@ -1,4 +1,5 @@
-import { ServiceLifetime } from "../core/lifetime";
+import { getInjectionMetadata } from "../core/annotations.js";
+import { ServiceLifetime } from "../core/lifetime.js";
 import type {
   BindingOptions,
   BindingScope,
@@ -9,7 +10,7 @@ import type {
   ServiceResolver,
   Token,
   TokenLike,
-} from "../core/types";
+} from "../core/types.js";
 
 export type BinderRegister = <T>(
   token: Token<T>,
@@ -96,17 +97,25 @@ export function createBinder(register: BinderRegister) {
       ) {
         return this.toHigherOrderFunction(fn, dependencies, options);
       },
+      toAnnotatedClass(
+        Klass: new (...args: any[]) => T,
+        options?: BindingOptions,
+      ) {
+        return this.toClass(Klass, getInjectionMetadata(Klass), options);
+      },
       toClass(
         Klass: new (...args: any[]) => T,
         dependencies?: DependencyArray | DependencyObject,
         options?: BindingOptions,
       ) {
+        const classDependencies =
+          dependencies ?? getInjectionMetadata(Klass) ?? undefined;
         const asyncMode = options?.async ?? false;
         if (asyncMode) {
           registerWithOptions(async (resolver) => {
             const deps = await resolveDependencies(
               resolver,
-              dependencies,
+              classDependencies,
               true,
             );
             return constructWithDependencies(
@@ -117,7 +126,7 @@ export function createBinder(register: BinderRegister) {
           return;
         }
         registerWithOptions((resolver) => {
-          const deps = resolveDependencies(resolver, dependencies, false);
+          const deps = resolveDependencies(resolver, classDependencies, false);
           return constructWithDependencies(Klass, deps) as T;
         }, options);
       },

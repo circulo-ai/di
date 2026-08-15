@@ -1,4 +1,4 @@
-import type { ServiceCollection } from "../core/service-collection";
+import type { ServiceCollection } from "../core/service-collection.js";
 
 type RegisterFn = (services: ServiceCollection) => void;
 

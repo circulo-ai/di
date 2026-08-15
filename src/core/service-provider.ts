@@ -3,9 +3,9 @@ import {
   CircularDependencyError,
   MissingServiceError,
   ScopeResolutionError,
-} from "./errors";
-import { ServiceLifetime } from "./lifetime";
-import { ServiceScope } from "./service-scope";
+} from "./errors.js";
+import { ServiceLifetime } from "./lifetime.js";
+import { ServiceScope } from "./service-scope.js";
 import type {
   Diagnostic,
   DiagnosticLevel,
@@ -17,12 +17,18 @@ import type {
   Token,
   TokenLike,
   TraceEvent,
-} from "./types";
+} from "./types.js";
 
 type ResolutionFrame = { token: Token; key?: ServiceKey };
 
 const GLOBAL_CACHE_KEY = Symbol.for("@circulo-ai/di:globals");
 const GLOBAL_PROMISE_CACHE_KEY = Symbol.for("@circulo-ai/di:globals:promises");
+const GLOBAL_IDENTITY_KEY = Symbol.for("@circulo-ai/di:global-identities");
+
+type GlobalIdentityStore = {
+  explicit: Map<string, object>;
+  keyed: Map<Token, Map<ServiceKey, object>>;
+};
 
 export class ServiceProvider implements ServiceResolver {
   private readonly descriptors: Map<Token, ServiceDescriptor[]>;
@@ -35,8 +41,8 @@ export class ServiceProvider implements ServiceResolver {
   private readonly singletonOrder: ServiceDescriptor[] = [];
   private readonly disposeHandlers: Array<{ fn: DisposeFn; priority: number }> =
     [];
-  private readonly globalCache: Map<string, unknown>;
-  private readonly globalPromises: Map<string, Promise<unknown>>;
+  private readonly globalCache: Map<unknown, unknown>;
+  private readonly globalPromises: Map<unknown, Promise<unknown>>;
 
   constructor(
     descriptors: ServiceDescriptor[],
@@ -76,6 +82,20 @@ export class ServiceProvider implements ServiceResolver {
     return this.resolveInternal(token, null, key, [], false) as T;
   }
 
+  getRequiredService<T>(token: TokenLike<T>, key?: ServiceKey): T {
+    return this.resolve(token, key);
+  }
+
+  getService<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined {
+    const { token: innerToken, optional } = unwrapToken(token);
+    if (!optional && !this.pickDescriptor(innerToken, key)) return undefined;
+    return this.resolve(token, key);
+  }
+
+  getServices<T>(token: Token<T>): T[] {
+    return this.resolveAll(token);
+  }
+
   async resolveAsync<T>(token: TokenLike<T>, key?: ServiceKey): Promise<T> {
     return (await this.resolveInternal(token, null, key, [], true)) as T;
   }
@@ -100,16 +120,55 @@ export class ServiceProvider implements ServiceResolver {
   }
 
   resolveAll<T>(token: Token<T>): T[] {
+    return this.resolveAllInternal(token, null, []);
+  }
+
+  resolveAllFromScope<T>(token: Token<T>, scope: ServiceScope): T[] {
+    return this.resolveAllInternal(token, scope, []);
+  }
+
+  private resolveAllInternal<T>(
+    token: Token<T>,
+    scope: ServiceScope | null,
+    stack: ResolutionFrame[],
+  ): T[] {
     const descriptors = this.descriptors.get(token) as
       | ServiceDescriptor<T>[]
       | undefined;
     if (!descriptors?.length) {
       return [];
     }
-    return descriptors.map((d) => this.resolveDescriptorSync(d, null, []));
+    return descriptors.map((descriptor) => {
+      const frame: ResolutionFrame = { token, key: descriptor.key };
+      if (stack.some((entry) => isSameFrame(entry, frame))) {
+        const path = [...stack, frame];
+        throw new CircularDependencyError(
+          `Circular dependency detected: ${path.map(formatFrame).join(" -> ")}`,
+          path,
+        );
+      }
+      const nextStack = [...stack, frame];
+      this.trace(nextStack, descriptor, false);
+      return this.resolveDescriptorSync(descriptor, scope, nextStack);
+    });
   }
 
   resolveMap<T>(token: Token<T>): Record<ServiceKey, T> {
+    return this.resolveMapInternal(token, null, []);
+  }
+
+  resolveMapFromScope<T>(
+    token: Token<T>,
+    scope: ServiceScope,
+  ): Record<ServiceKey, T> {
+    return this.resolveMapInternal(token, scope, []);
+  }
+
+  private resolveMapInternal<T>(
+    token: Token<T>,
+    scope: ServiceScope | null,
+    stack: ResolutionFrame[],
+  ): Record<ServiceKey, T> {
     const descriptors = this.descriptors.get(token) as
       | ServiceDescriptor<T>[]
       | undefined;
@@ -121,12 +180,27 @@ export class ServiceProvider implements ServiceResolver {
           `resolveMap requires keyed registrations for token ${tokenLabel(token)}`,
         );
       }
-      if (map[d.key] !== undefined) {
+      if (Object.prototype.hasOwnProperty.call(map, d.key)) {
         throw new Error(
           `Duplicate key ${keyLabel(d.key)} for token ${tokenLabel(token)}`,
         );
       }
-      map[d.key] = this.resolveDescriptorSync(d, null, []);
+      const frame: ResolutionFrame = { token, key: d.key };
+      if (stack.some((entry) => isSameFrame(entry, frame))) {
+        const path = [...stack, frame];
+        throw new CircularDependencyError(
+          `Circular dependency detected: ${path.map(formatFrame).join(" -> ")}`,
+          path,
+        );
+      }
+      const nextStack = [...stack, frame];
+      this.trace(nextStack, d, false);
+      Object.defineProperty(map, d.key, {
+        value: this.resolveDescriptorSync(d, scope, nextStack),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     return map;
   }
@@ -136,12 +210,22 @@ export class ServiceProvider implements ServiceResolver {
   }
 
   async dispose(): Promise<void> {
+    const pending: Promise<unknown>[] = [];
+    for (const descriptors of this.descriptors.values()) {
+      for (const descriptor of descriptors) {
+        const promise = this.singletonPromises.get(descriptor);
+        if (promise) pending.push(promise);
+      }
+    }
+    await Promise.allSettled(pending);
+
+    const errors: unknown[] = [];
     const sortedHandlers = [...this.disposeHandlers].sort(
       (a, b) => b.priority - a.priority,
     );
-    for (const handler of sortedHandlers) {
-      await handler.fn();
-    }
+    await disposeFunctions(sortedHandlers.map((handler) => handler.fn)).catch(
+      (error) => errors.push(error),
+    );
 
     const instances: Array<{
       descriptor: ServiceDescriptor;
@@ -155,22 +239,24 @@ export class ServiceProvider implements ServiceResolver {
     }
     await disposeMany(
       sortByPriorityAndOrder(
-        instances,
+        instances.filter((item) => !item.descriptor.customDispose),
         (i) => i.descriptor.disposePriority,
       ).map((i) => i.instance),
-    );
-    await disposeMany(
+    ).catch((error) => errors.push(error));
+    await disposeFunctions(
       sortByPriorityAndOrder(
         this.singletonOrder
           .map((d) => ({ descriptor: d, dispose: d.customDispose }))
           .filter((d) => d.dispose),
         (i) => i.descriptor.disposePriority,
       ).map((i) => i.dispose as DisposeFn),
-    );
+    ).catch((error) => errors.push(error));
     this.singletons = new WeakMap();
     this.singletonPromises = new WeakMap();
     this.singletonDescriptors.clear();
     this.singletonOrder.length = 0;
+    this.disposeHandlers.length = 0;
+    throwDisposalErrors(errors);
   }
 
   getDescriptor(token: Token, key?: ServiceKey): ServiceDescriptor | undefined {
@@ -299,23 +385,27 @@ export class ServiceProvider implements ServiceResolver {
   ): Promise<T> {
     switch (descriptor.lifetime) {
       case ServiceLifetime.Singleton: {
-        const existing = this.singletons.get(descriptor);
-        if (existing !== undefined) return existing as T;
+        if (this.singletons.has(descriptor)) {
+          return this.singletons.get(descriptor) as T;
+        }
 
         const inflight = this.singletonPromises.get(descriptor);
         if (inflight) return inflight as Promise<T>;
 
         const promise = this.materializeAsync(descriptor, scope, stack);
         this.singletonPromises.set(descriptor, promise);
-        const created = await promise;
-        this.singletonPromises.delete(descriptor);
-        this.singletons.set(descriptor, created);
-        this.singletonDescriptors.add(descriptor);
-        this.recordSingletonResolution(descriptor);
-        return created;
+        try {
+          const created = await promise;
+          this.singletons.set(descriptor, created);
+          this.singletonDescriptors.add(descriptor);
+          this.recordSingletonResolution(descriptor);
+          return created;
+        } finally {
+          this.singletonPromises.delete(descriptor);
+        }
       }
       case ServiceLifetime.GlobalSingleton: {
-        const globalKey = descriptor.globalKey ?? this.globalKeyFor(descriptor);
+        const globalKey = this.globalKeyFor(descriptor);
         if (this.globalCache.has(globalKey)) {
           return this.globalCache.get(globalKey) as T;
         }
@@ -323,10 +413,13 @@ export class ServiceProvider implements ServiceResolver {
         if (inflight) return inflight as Promise<T>;
         const promise = this.materializeAsync(descriptor, scope, stack);
         this.globalPromises.set(globalKey, promise);
-        const created = await promise;
-        this.globalPromises.delete(globalKey);
-        this.globalCache.set(globalKey, created);
-        return created;
+        try {
+          const created = await promise;
+          this.globalCache.set(globalKey, created);
+          return created;
+        } finally {
+          this.globalPromises.delete(globalKey);
+        }
       }
       case ServiceLifetime.Scoped: {
         if (!scope) {
@@ -339,17 +432,22 @@ export class ServiceProvider implements ServiceResolver {
             stack,
           );
         }
-        const cached = scope.getCached(descriptor);
-        if (cached !== undefined) return cached as T;
+        if (scope.hasCached(descriptor)) {
+          return scope.getCached(descriptor) as T;
+        }
 
         const pending = scope.getPending(descriptor);
         if (pending) return pending as Promise<T>;
 
         const promise = this.materializeAsync(descriptor, scope, stack);
         scope.setPending(descriptor, promise);
-        const created = await promise;
-        scope.setInstance(descriptor, created);
-        return created;
+        try {
+          const created = await promise;
+          scope.setInstance(descriptor, created);
+          return created;
+        } finally {
+          scope.clearPending(descriptor);
+        }
       }
       case ServiceLifetime.Transient:
       default: {
@@ -365,8 +463,9 @@ export class ServiceProvider implements ServiceResolver {
   ): T {
     switch (descriptor.lifetime) {
       case ServiceLifetime.Singleton: {
-        const existing = this.singletons.get(descriptor);
-        if (existing !== undefined) return existing as T;
+        if (this.singletons.has(descriptor)) {
+          return this.singletons.get(descriptor) as T;
+        }
         const pending = this.singletonPromises.get(descriptor);
         if (pending) {
           throw new AsyncFactoryError(
@@ -385,7 +484,7 @@ export class ServiceProvider implements ServiceResolver {
         return created;
       }
       case ServiceLifetime.GlobalSingleton: {
-        const globalKey = descriptor.globalKey ?? this.globalKeyFor(descriptor);
+        const globalKey = this.globalKeyFor(descriptor);
         if (this.globalCache.has(globalKey)) {
           return this.globalCache.get(globalKey) as T;
         }
@@ -425,9 +524,12 @@ export class ServiceProvider implements ServiceResolver {
             stack,
           );
         }
-        const cached = scope.getCached(descriptor);
-        if (cached !== undefined) return cached as T;
-        return scope.getOrCreate(descriptor);
+        if (scope.hasCached(descriptor)) {
+          return scope.getCached(descriptor) as T;
+        }
+        const created = this.materializeSync(descriptor, scope, stack);
+        scope.setInstance(descriptor, created);
+        return created;
       }
       case ServiceLifetime.Transient:
       default:
@@ -538,14 +640,44 @@ export class ServiceProvider implements ServiceResolver {
         }
       },
       resolveAll: <T>(token: Token<T>) =>
-        this.resolveAll(token) as unknown as T[],
+        this.resolveAllInternal(token, scope, stack),
+      resolveMap: <T>(token: Token<T>) =>
+        this.resolveMapInternal(token, scope, stack),
+      getRequiredService: <T>(token: TokenLike<T>, key?: ServiceKey) =>
+        this.resolveInternal(token, scope, key, stack, false) as T,
+      getService: <T>(token: TokenLike<T>, key?: ServiceKey) => {
+        const { token: innerToken, optional } = unwrapToken(token);
+        if (!optional && !this.pickDescriptor(innerToken, key))
+          return undefined;
+        return this.resolveInternal(token, scope, key, stack, false) as T;
+      },
+      getServices: <T>(token: Token<T>) =>
+        this.resolveAllInternal(token, scope, stack),
     };
   }
 
-  private globalKeyFor(descriptor: ServiceDescriptor): string {
-    const keyPart =
-      descriptor.key !== undefined ? `:${keyLabel(descriptor.key)}` : "";
-    return descriptor.globalKey ?? `${tokenLabel(descriptor.token)}${keyPart}`;
+  private globalKeyFor(descriptor: ServiceDescriptor): unknown {
+    const identities = getGlobalIdentityStore();
+    if (descriptor.globalKey !== undefined) {
+      let identity = identities.explicit.get(descriptor.globalKey);
+      if (!identity) {
+        identity = {};
+        identities.explicit.set(descriptor.globalKey, identity);
+      }
+      return identity;
+    }
+    if (descriptor.key === undefined) return descriptor.token;
+    let keys = identities.keyed.get(descriptor.token);
+    if (!keys) {
+      keys = new Map();
+      identities.keyed.set(descriptor.token, keys);
+    }
+    let identity = keys.get(descriptor.key);
+    if (!identity) {
+      identity = {};
+      keys.set(descriptor.key, identity);
+    }
+    return identity;
   }
 
   private pickDescriptor<T>(
@@ -586,22 +718,33 @@ export class ServiceProvider implements ServiceResolver {
 
 export async function disposeMany(services: unknown[]): Promise<void> {
   const disposals: Promise<void>[] = [];
+  const errors: unknown[] = [];
   for (const service of services) {
     const disposeFn = getDisposeFn(service);
     if (typeof disposeFn === "function") {
-      const result = disposeFn.call(service);
-      if (result instanceof Promise) {
-        disposals.push(result.then(() => undefined));
+      try {
+        disposals.push(Promise.resolve(disposeFn.call(service)));
+      } catch (error) {
+        errors.push(error);
       }
-    } else if (typeof service === "function") {
-      const result = service();
-      if (result instanceof Promise)
-        disposals.push(result.then(() => undefined));
     }
   }
-  if (disposals.length) {
-    await Promise.all(disposals);
+  const results = await Promise.allSettled(disposals);
+  for (const result of results) {
+    if (result.status === "rejected") errors.push(result.reason);
   }
+  throwDisposalErrors(errors);
+}
+
+export async function disposeFunctions(functions: DisposeFn[]): Promise<void> {
+  const results = await Promise.allSettled(
+    functions.map(async (dispose) => await dispose()),
+  );
+  throwDisposalErrors(
+    results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason),
+  );
 }
 
 function getDisposeFn(
@@ -653,23 +796,47 @@ function formatFrame(frame: ResolutionFrame): string {
   return `${tokenLabel(frame.token)}${frame.key !== undefined ? `(${keyLabel(frame.key)})` : ""}`;
 }
 
-function getGlobalCache(): Map<string, unknown> {
+function getGlobalCache(): Map<unknown, unknown> {
   const store = globalThis as unknown as Record<string | symbol, unknown>;
-  const existing = store[GLOBAL_CACHE_KEY] as Map<string, unknown> | undefined;
+  const existing = store[GLOBAL_CACHE_KEY] as Map<unknown, unknown> | undefined;
   if (existing) return existing;
   const created = new Map<string, unknown>();
   store[GLOBAL_CACHE_KEY] = created;
   return created;
 }
 
-function getGlobalPromiseCache(): Map<string, Promise<unknown>> {
+function getGlobalPromiseCache(): Map<unknown, Promise<unknown>> {
   const store = globalThis as unknown as Record<string | symbol, unknown>;
   const existing = store[GLOBAL_PROMISE_CACHE_KEY] as
-    | Map<string, Promise<unknown>>
+    | Map<unknown, Promise<unknown>>
     | undefined;
   if (existing) return existing;
   const created = new Map<string, Promise<unknown>>();
   store[GLOBAL_PROMISE_CACHE_KEY] = created;
+  return created;
+}
+
+function throwDisposalErrors(errors: unknown[]): void {
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(
+      errors,
+      "Multiple errors occurred during disposal.",
+    );
+  }
+}
+
+function getGlobalIdentityStore(): GlobalIdentityStore {
+  const store = globalThis as unknown as Record<string | symbol, unknown>;
+  const existing = store[GLOBAL_IDENTITY_KEY] as
+    | GlobalIdentityStore
+    | undefined;
+  if (existing) return existing;
+  const created: GlobalIdentityStore = {
+    explicit: new Map(),
+    keyed: new Map(),
+  };
+  store[GLOBAL_IDENTITY_KEY] = created;
   return created;
 }
 

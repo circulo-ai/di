@@ -1,6 +1,10 @@
-import { AsyncFactoryError } from "./errors";
-import { ServiceLifetime } from "./lifetime";
-import { disposeMany, ServiceProvider } from "./service-provider";
+import { DisposedScopeError } from "./errors.js";
+import { ServiceLifetime } from "./lifetime.js";
+import {
+  disposeFunctions,
+  disposeMany,
+  ServiceProvider,
+} from "./service-provider.js";
 import type {
   DisposeFn,
   ServiceDescriptor,
@@ -8,7 +12,7 @@ import type {
   ServiceResolver,
   Token,
   TokenLike,
-} from "./types";
+} from "./types.js";
 
 export class ServiceScope implements ServiceResolver {
   private readonly scopedInstances = new Map<ServiceDescriptor, unknown>();
@@ -23,23 +27,47 @@ export class ServiceScope implements ServiceResolver {
 
   constructor(private readonly root: ServiceProvider) {}
 
+  /** .NET-style access to the resolver owned by this scope. */
+  get serviceProvider(): ServiceResolver {
+    return this;
+  }
+
   onDispose(handler: DisposeFn): void {
     this.onDisposeWithPriority(handler);
   }
 
   onDisposeWithPriority(handler: DisposeFn, priority = 0): void {
+    this.assertActive();
     this.disposeHandlers.push({ fn: handler, priority });
   }
 
   resolve<T>(token: TokenLike<T>, key?: ServiceKey): T {
+    this.assertActive();
     return this.root.resolveFromScope(token, this, key);
   }
 
+  getRequiredService<T>(token: TokenLike<T>, key?: ServiceKey): T {
+    return this.resolve(token, key);
+  }
+
+  getService<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined {
+    this.assertActive();
+    const innerToken = typeof token === "object" ? token.token : token;
+    if (!this.root.getDescriptor(innerToken, key)) return undefined;
+    return this.resolve(token, key);
+  }
+
+  getServices<T>(token: Token<T>): T[] {
+    return this.resolveAll(token);
+  }
+
   async resolveAsync<T>(token: TokenLike<T>, key?: ServiceKey): Promise<T> {
+    this.assertActive();
     return await this.root.resolveFromScopeAsync(token, this, key);
   }
 
   tryResolve<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined {
+    this.assertActive();
     try {
       return this.resolve(token, key);
     } catch {
@@ -51,6 +79,7 @@ export class ServiceScope implements ServiceResolver {
     token: TokenLike<T>,
     key?: ServiceKey,
   ): Promise<T | undefined> {
+    this.assertActive();
     try {
       return await this.resolveAsync(token, key);
     } catch {
@@ -59,31 +88,28 @@ export class ServiceScope implements ServiceResolver {
   }
 
   resolveAll<T>(token: Token<T>): T[] {
-    const descriptors = this.root.getDescriptors(token);
-    if (!descriptors?.length) return [];
-    return descriptors.map((d) => this.root.resolveDescriptor(d, this));
+    this.assertActive();
+    return this.root.resolveAllFromScope(token, this);
   }
 
   getOrCreate<T>(descriptor: ServiceDescriptor<T>): T {
+    this.assertActive();
     if (descriptor.lifetime !== ServiceLifetime.Scoped) {
       throw new Error(
         `Descriptor for ${descriptor.token.toString()} is not scoped`,
       );
     }
 
-    if (this.scopedInstances.has(descriptor)) {
-      return this.scopedInstances.get(descriptor) as T;
-    }
+    return this.root.resolveDescriptor(descriptor, this);
+  }
 
-    const instance = descriptor.factory(this);
-    if (instance && typeof (instance as any).then === "function") {
-      throw new AsyncFactoryError(
-        `Async factory detected for ${descriptor.token.toString()}. Use resolveAsync().`,
-      );
-    }
-    this.scopedInstances.set(descriptor, instance as T);
-    this.recordResolution(descriptor);
-    return instance as T;
+  resolveMap<T>(token: Token<T>): Record<ServiceKey, T> {
+    this.assertActive();
+    return this.root.resolveMapFromScope(token, this);
+  }
+
+  hasCached(descriptor: ServiceDescriptor): boolean {
+    return this.scopedInstances.has(descriptor);
   }
 
   getCached(descriptor: ServiceDescriptor): unknown | undefined {
@@ -98,6 +124,10 @@ export class ServiceScope implements ServiceResolver {
     this.scopedPromises.set(descriptor, promise);
   }
 
+  clearPending(descriptor: ServiceDescriptor): void {
+    this.scopedPromises.delete(descriptor);
+  }
+
   setInstance(descriptor: ServiceDescriptor, value: unknown): void {
     this.scopedInstances.set(descriptor, value);
     this.scopedPromises.delete(descriptor);
@@ -106,33 +136,49 @@ export class ServiceScope implements ServiceResolver {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
+    this.disposed = true;
+    await Promise.allSettled([...this.scopedPromises.values()]);
     const handlers = [...this.disposeHandlers].sort(
       (a, b) => b.priority - a.priority,
     );
-    for (const handler of handlers) {
-      await handler.fn();
-    }
+    const errors: unknown[] = [];
+    await captureDisposalError(
+      disposeFunctions(handlers.map((handler) => handler.fn)),
+      errors,
+    );
     const instances = this.resolutionOrder
       .map((d) => ({ descriptor: d, instance: this.scopedInstances.get(d) }))
       .filter((x) => x.instance !== undefined);
     await disposeMany(
       sortByPriorityAndOrder(
-        instances,
+        instances.filter((item) => !item.descriptor.customDispose),
         (i) => i.descriptor.disposePriority,
       ).map((i) => i.instance as unknown),
-    );
-    await disposeMany(
+    ).catch((error) => errors.push(error));
+    await disposeFunctions(
       sortByPriorityAndOrder(
         this.resolutionOrder
           .map((d) => ({ descriptor: d, dispose: d.customDispose }))
           .filter((d) => d.dispose),
         (i) => i.descriptor.disposePriority,
       ).map((i) => i.dispose as DisposeFn),
-    );
+    ).catch((error) => errors.push(error));
     this.scopedInstances.clear();
     this.scopedPromises.clear();
     this.resolutionOrder.length = 0;
-    this.disposed = true;
+    this.disposeHandlers.length = 0;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        "Multiple errors occurred during scope disposal.",
+      );
+    }
+  }
+
+  /** Familiar async-disposal alias for hosts that prefer explicit teardown. */
+  async disposeAsync(): Promise<void> {
+    await this.dispose();
   }
 
   /**
@@ -147,6 +193,21 @@ export class ServiceScope implements ServiceResolver {
     if (!this.resolutionOrder.includes(descriptor)) {
       this.resolutionOrder.push(descriptor);
     }
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new DisposedScopeError();
+  }
+}
+
+async function captureDisposalError(
+  operation: Promise<void>,
+  errors: unknown[],
+): Promise<void> {
+  try {
+    await operation;
+  } catch (error) {
+    errors.push(error);
   }
 }
 

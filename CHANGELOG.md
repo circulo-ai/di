@@ -1,5 +1,57 @@
 # Changelog
 
+## 3.2.0 - 2026-08-09
+
+### Minor Changes
+
+- Added reflection-free constructor annotations through `injectable()` and `annotate()`. Annotated classes work with `bind(...).toClass(...)` and `useClass()` without adding `reflect-metadata`.
+- Added a .NET-inspired developer experience: annotated class self-registration, `buildServiceProvider()`, `getRequiredService()`, `getService()`, `getServices()`, scoped `serviceProvider`, and `disposeAsync()` aliases.
+- Added `resolveMap()` to scoped and factory resolvers, so keyed scoped services retain the active scope.
+
+### Reliability and Security
+
+- Fixed scoped circular dependencies bypassing cycle detection and fixed `resolveAll()` losing scope context inside factories.
+- Failed async singleton, global-singleton, and scoped factories no longer poison in-flight caches; later resolutions can retry safely.
+- Disposing a scope now waits for in-flight scoped creation, attempts all cleanup operations even if one fails, and prevents use-after-dispose with `DisposedScopeError`.
+- Singleton and scoped factories that return `undefined` are now cached correctly.
+- Global-singleton cache keys now preserve token identity, preventing collisions between distinct symbols or classes with identical labels. Use an explicit `globalKey` for stable reuse when hot reload recreates a token.
+- `resolveMap()` safely handles prototype-like keys such as `__proto__` without mutating the result object's prototype.
+- Function-valued services are no longer invoked as implicit disposal callbacks. Explicit value-provider disposers continue to be supported.
+
+### Packaging and Developer Experience
+
+- Cleaned stale build output before verification and packaging, preventing compiled tests and duplicate `dist/src` trees from entering npm tarballs.
+- Added native Node.js ESM package smoke testing and `.js` import specifiers so the published output works without bundler-specific resolution.
+- Added a complete Apache-2.0 license file, ESM import metadata, a Node.js engine declaration, and `sideEffects: false` for bundlers.
+- Upgraded Hono development types and Vitest tooling, restricted test discovery to source tests, and made `prepack` run the complete clean/typecheck/test/build gate.
+- Corrected non-working README examples, documented annotation usage and disposed-scope behavior, and restored missing historical changelog entries.
+- Added executable annotation, modular application, background worker, Next.js-style, and annotated Hono examples; the prepack gate now type-checks them and runs the annotation example against the built package.
+
+## 3.1.0 - 2025-12-22
+
+### Minor Changes
+
+- Added `createServiceLocator` with strict and memoized modes, nested token-tree typing, own-property guards, optional tokens, and collision-safe property caching.
+- Reused the locator in the Hono integration. `bindToHono` now defaults to `cache: false` to preserve transient semantics.
+
+## 3.0.1 - 2025-12-21
+
+### Patch Changes
+
+- Updated the README.
+
+## 3.0.0 - 2025-12-21
+
+### Major Changes
+
+- Added the fluent binding DSL and reusable service modules.
+
+## 2.1.1 - 2025-12-10
+
+### Patch Changes
+
+- Updated workspace and package-manager integration.
+
 ## 2.1.0
 
 ### Minor Changes

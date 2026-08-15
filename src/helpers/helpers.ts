@@ -1,8 +1,9 @@
-import { ServiceLifetime } from "../core/lifetime";
-import type { ServiceCollection } from "../core/service-collection";
-import type { ServiceProvider } from "../core/service-provider";
-import type { ServiceScope } from "../core/service-scope";
-import type { ServiceResolver, Token, TokenLike } from "../core/types";
+import { getInjectionMetadata } from "../core/annotations.js";
+import { ServiceLifetime } from "../core/lifetime.js";
+import type { ServiceCollection } from "../core/service-collection.js";
+import type { ServiceProvider } from "../core/service-provider.js";
+import type { ServiceScope } from "../core/service-scope.js";
+import type { ServiceResolver, Token, TokenLike } from "../core/types.js";
 
 export function factory<T>(token: TokenLike<T>) {
   return (resolver: ServiceResolver) => () => resolver.resolve(token);
@@ -39,15 +40,16 @@ export function useExisting<T>(
 export function useClass<T>(
   services: ServiceCollection,
   token: Token<T>,
-  Klass: new () => T,
+  Klass: new (...args: any[]) => T,
   options?: { lifetime?: ServiceLifetime; key?: string | number | symbol },
 ): ServiceCollection {
   const lifetime = options?.lifetime ?? ServiceLifetime.Transient;
-  const register = makeRegister(services, lifetime);
-  return register(token, () => new Klass(), {
+  services.bind(token).toClass(Klass, getInjectionMetadata(Klass), {
+    lifetime,
     key: options?.key,
     multiple: true,
   });
+  return services;
 }
 
 function makeRegister(

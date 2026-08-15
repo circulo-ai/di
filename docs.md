@@ -22,7 +22,9 @@ const services = new ServiceCollection({
   allowOverwrite: false,
   trace: console.debug,
 })
-  .addGlobalSingleton(TYPES.Db, async () => createPool()) // survives hot-reload
+  .addGlobalSingleton(TYPES.Db, async () => createPool(), {
+    globalKey: "primary-db", // stable even if hot reload recreates TYPES.Db
+  })
   .addScoped(TYPES.Logger, () => makeRequestLogger()) // per-request
   .addTransient(TYPES.Clock, () => new Date()); // every resolve
 
@@ -49,7 +51,11 @@ await provider.withScope(async (scope) => {
 
 - `useExisting(services, Alias, Source, { lifetime, key })`: alias another token, optionally keyed/multiple.
 - `useClass(services, Token, Klass, { lifetime, key })`: construct class.
+- `injectable(dependencies)`: opt-in class decorator for explicit constructor injection without `reflect-metadata`.
+- `annotate(Klass, dependencies)`: attach the same metadata without enabling decorator syntax.
 - `services.bind(Token)`: fluent DSL `toValue/toFunction/toFactory/toClass/toHigherOrderFunction` with array/object deps and `scope` aliases (`singleton|global|scoped|transient`).
+- Annotated classes can self-register with `addSingleton(Class)`, `addScoped(Class)`, and `addTransient(Class)`, using the class itself as the token.
+- `buildServiceProvider({ validateOnBuild: true })`, `getRequiredService`, `getService`, and `getServices` provide familiar Microsoft.Extensions.DependencyInjection-style vocabulary. Existing `build` and `resolve*` APIs remain equivalent.
 - `factory(token)`: inject a resolver function to fetch a token on-demand.
 - `lazy(token)`: memoized thunk per scope.
 - `ifProd/ifDev/ifTruthy(envVar)`: conditional registration helpers.
@@ -70,13 +76,27 @@ services
 services.bind(Logger).toClass(Logger, { sink: "Sink" });
 ```
 
+Annotated classes can omit the dependency argument. Arrays inject positional arguments; objects inject a single named-dependency object.
+
+```ts
+const LOGGER = createToken<Logger>("Logger");
+
+@injectable([LOGGER])
+class UserService {
+  constructor(readonly logger: Logger) {}
+}
+
+services.bind(UserService).toClass(UserService);
+// Without decorator syntax: annotate(UserService, [LOGGER]);
+```
+
 ## Lifetimes & disposal
 
 - `Singleton`: once per provider; disposed on `provider.dispose()` in priority order (higher first, then reverse creation).
-- `GlobalSingleton`: stored in `globalThis` across providers/hot reloads. Clear manually if needed.
-- `Scoped`: once per scope; disposed on `scope.dispose()` with `disposePriority` and reverse resolution order.
+- `GlobalSingleton`: stored in `globalThis` by token identity. Set `globalKey` for reuse when hot reload recreates the token. Clear manually if needed.
+- `Scoped`: once per scope; disposed on `scope.dispose()` with `disposePriority` and reverse resolution order. A disposed scope is terminal and throws `DisposedScopeError` if reused.
 - `Transient`: new instance each resolve; not cached or disposed automatically.
-- Supported disposers: `dispose`, `close`, `destroy`, `Symbol.dispose`, `Symbol.asyncDispose`, or a custom disposer you attach to value providers.
+- Supported object disposers: `dispose`, `close`, `destroy`, `Symbol.dispose`, `Symbol.asyncDispose`, or a custom disposer you attach to value providers. Function-valued services are not invoked during disposal.
 - Hooks: `scope.onDispose*`, `provider.onDispose*`; `provider.withScope(fn)` wraps work with automatic dispose.
 
 ## Async factories
@@ -147,6 +167,8 @@ di.db.primary;
 
 ## Real-world examples
 
+The repository includes executable examples under `examples/`. The release gate type-checks the framework-neutral and Hono examples and executes `examples/annotations.ts` against the built package. This covers decorator syntax, `annotate()` without decorators, optional dependencies, named dependency objects, async dependencies, and scoped disposal.
+
 ### Next.js route handler
 
 ```ts
@@ -186,11 +208,13 @@ export const GET = withRequestScope(provider, async (_req, ctx) => {
 import { createModule } from "@circulo-ai/di";
 export const TYPES = { Sender: "Sender", NotifyUser: "NotifyUser" } as const;
 
-export const notifications = createModule()
+export const notifications = createModule();
+notifications
   .bind(TYPES.Sender)
   .toHigherOrderFunction((deps) => new EmailSender(deps.config), {
     config: "Config",
-  })
+  });
+notifications
   .bind(TYPES.NotifyUser)
   .toHigherOrderFunction(
     (sender) => async (userId: string, message: string) =>
@@ -232,6 +256,7 @@ export async function handleJob(job: Job) {
 - Circular detection with breadcrumb paths.
 - Scoped resolution from root throws `ScopeResolutionError`.
 - Async factories resolved synchronously throw `AsyncFactoryError`.
+- Reusing a disposed scope throws `DisposedScopeError`.
 - Optional tokens return `undefined` without throwing.
 
 ## Recipes

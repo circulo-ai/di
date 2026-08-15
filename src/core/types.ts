@@ -1,13 +1,23 @@
-import type { ServiceLifetime } from "./lifetime";
+import type { ServiceLifetime } from "./lifetime.js";
+
+declare const INJECTION_TOKEN_TYPE: unique symbol;
+declare const OPTIONAL_TOKEN_TYPE: unique symbol;
+
+/** A runtime symbol carrying its service type for TypeScript inference. */
+export type InjectionToken<T> = symbol & {
+  readonly [INJECTION_TOKEN_TYPE]?: T;
+};
 
 export type Token<T = unknown> =
   | string
   | symbol
+  | InjectionToken<T>
   | (abstract new (...args: any[]) => T);
 
 export type OptionalToken<T = unknown> = {
   __optional: true;
   token: Token<T>;
+  readonly [OPTIONAL_TOKEN_TYPE]?: T;
 };
 
 export type TokenLike<T = unknown> = Token<T> | OptionalToken<T>;
@@ -69,6 +79,13 @@ export interface ServiceResolver {
   resolve<T>(token: TokenLike<T>, key?: ServiceKey): T;
   tryResolve<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined;
   resolveAll<T>(token: Token<T>): T[];
+  resolveMap<T>(token: Token<T>): Record<ServiceKey, T>;
+  /** .NET-style alias for `resolve`. */
+  getRequiredService<T>(token: TokenLike<T>, key?: ServiceKey): T;
+  /** Return an unregistered service as undefined; resolution failures still throw. */
+  getService<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined;
+  /** .NET-style alias for `resolveAll`. */
+  getServices<T>(token: Token<T>): T[];
   resolveAsync<T>(token: TokenLike<T>, key?: ServiceKey): Promise<T>;
   tryResolveAsync<T>(
     token: TokenLike<T>,

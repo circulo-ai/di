@@ -1,5 +1,5 @@
-import type { ServiceProvider } from "../core/service-provider";
-import type { ServiceScope } from "../core/service-scope";
+import type { ServiceProvider } from "../core/service-provider.js";
+import type { ServiceScope } from "../core/service-scope.js";
 
 const DEFAULT_PROVIDER_KEY = Symbol.for("@circulo-ai/di:next:provider");
 

@@ -1,4 +1,4 @@
-import type { ServiceKey, Token } from "./types";
+import type { ServiceKey, Token } from "./types.js";
 
 type PathEntry = { token: Token; key?: ServiceKey };
 
@@ -45,5 +45,14 @@ export class ScopeResolutionError extends Error {
   ) {
     super(message);
     this.name = "ScopeResolutionError";
+  }
+}
+
+export class DisposedScopeError extends Error {
+  constructor(
+    message = "Cannot use a service scope after it has been disposed.",
+  ) {
+    super(message);
+    this.name = "DisposedScopeError";
   }
 }

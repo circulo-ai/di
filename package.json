@@ -1,13 +1,20 @@
 {
   "name": "@circulo-ai/di",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "files": [
     "dist",
     "README.md",
-    "docs.md"
+    "docs.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "examples"
   ],
   "keywords": [
     "dependency-injection",
@@ -22,15 +29,16 @@
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/circulo-ai/di.git"
+    "url": "git+https://github.com/mhbdev/circulo.git"
   },
   "bugs": {
-    "url": "https://github.com/circulo-ai/di/issues"
+    "url": "https://github.com/mhbdev/circulo/issues"
   },
-  "homepage": "https://github.com/circulo-ai/di#readme",
+  "homepage": "https://github.com/mhbdev/circulo#readme",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
   },
@@ -39,13 +47,17 @@
   },
   "scripts": {
     "dev": "tsc -p tsconfig.json --watch",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "prepack": "bun run build",
+    "check": "bun run clean && bun run typecheck && bun run test && bun run build && bun run test:package && bun run test:examples",
+    "prepack": "bun run check",
     "test": "vitest run",
+    "test:package": "node --input-type=module -e \"const di=await import('./dist/index.js');const ok=new di.ServiceCollection().addSingleton('ready',true).build().resolve('ready');if(!ok)process.exit(1)\"",
+    "test:examples": "tsc --noEmit -p tsconfig.examples.json && tsc --noEmit -p examples/hono/tsconfig.json && bun examples/annotations.ts && bun examples/real-world.ts && bun examples/hono/src/smoke.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "release": "bun build && npm publish --access public"
+    "release": "npm publish --access public"
   },
   "peerDependencies": {
     "hono": "^4.10.7"
@@ -56,10 +68,11 @@
     }
   },
   "devDependencies": {
+    "@types/bun": "^1.3.14",
     "@types/node": "^20.19.25",
-    "hono": "^4.10.7",
-    "@vitest/coverage-v8": "^2.1.4",
+    "hono": "^4.13.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.10"
   }
 }

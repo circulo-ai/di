@@ -4,6 +4,7 @@
 import {
   ServiceCollection,
   createModule,
+  createToken,
   getGlobalProvider,
   withRequestScope,
 } from "@circulo-ai/di";
@@ -11,14 +12,26 @@ import {
 // ---------------------------------------------------------------------------
 // 1) Next.js App Route: global pool + scoped logger
 // ---------------------------------------------------------------------------
-const TYPES = { Db: "Db", Logger: "Logger" } as const;
+type Database = ReturnType<typeof createPool>;
+type Logger = ReturnType<typeof createRequestLogger>;
+type UserRepositoryContract = {
+  findById(id: string): Promise<unknown>;
+};
+
+const TYPES = {
+  Db: createToken<Database>("Db"),
+  Logger: createToken<Logger>("Logger"),
+  UserRepo: createToken<UserRepositoryContract>("UserRepo"),
+  GetUser: createToken<(id: string) => Promise<unknown>>("GetUser"),
+} as const;
 
 // Reuse the provider across hot reloads and edge/runtime invocations.
 export const provider = getGlobalProvider(() => {
   const services = new ServiceCollection();
-  services
-    .bind(TYPES.Db)
-    .toHigherOrderFunction(() => createPool(), [], { scope: "global" });
+  services.bind(TYPES.Db).toHigherOrderFunction(() => createPool(), [], {
+    scope: "global",
+    globalKey: "example-primary-db",
+  });
   services
     .bind(TYPES.Logger)
     .toFactory(() => createRequestLogger(), { scope: "scoped" });
@@ -39,18 +52,33 @@ export const GET = withRequestScope(provider, async (_req: Request, ctx) => {
 // ---------------------------------------------------------------------------
 // 2) Feature module using the binder DSL
 // ---------------------------------------------------------------------------
-export const userModule = createModule()
-  .bind("UserRepo")
-  .toClass(UserRepository, { db: TYPES.Db }) // object deps map to ctor args
-  .bind("GetUser")
+class UserRepository implements UserRepositoryContract {
+  constructor(
+    private readonly deps: { db: { query: (sql: string) => Promise<any[]> } },
+  ) {}
+  async findById(id: string) {
+    const rows = await this.deps.db.query(
+      `select * from users where id='${id}'`,
+    );
+    return rows[0];
+  }
+}
+
+export const userModule = createModule();
+userModule.bind(TYPES.UserRepo).toClass(UserRepository, { db: TYPES.Db }); // object deps map to ctor args
+userModule
+  .bind(TYPES.GetUser)
   .toHigherOrderFunction(
-    (repo: UserRepository) => (id: string) => repo.findById(id),
-    ["UserRepo"],
+    (repo: UserRepositoryContract) => (id: string) => repo.findById(id),
+    [TYPES.UserRepo],
   );
 
 // Compose modules + core services
 export const appServices = new ServiceCollection()
-  .addGlobalSingleton(TYPES.Db, () => createPool(), { disposePriority: 10 })
+  .addGlobalSingleton(TYPES.Db, () => createPool(), {
+    disposePriority: 10,
+    globalKey: "example-primary-db",
+  })
   .addModule(userModule);
 
 export const appProvider = appServices.build();
@@ -58,17 +86,23 @@ export const appProvider = appServices.build();
 // ---------------------------------------------------------------------------
 // 3) Background worker with scoped disposals
 // ---------------------------------------------------------------------------
-export const workerServices = new ServiceCollection()
-  .addGlobalSingleton("Queue", () => connectQueue(), { disposePriority: 5 })
-  .bind("JobLogger")
+const QUEUE = createToken<ReturnType<typeof connectQueue>>("Queue");
+const JOB_LOGGER = createToken<ReturnType<typeof createJobLogger>>("JobLogger");
+export const workerServices = new ServiceCollection().addGlobalSingleton(
+  QUEUE,
+  () => connectQueue(),
+  { disposePriority: 5, globalKey: "example-queue" },
+);
+workerServices
+  .bind(JOB_LOGGER)
   .toFactory(() => createJobLogger(), { scope: "scoped" });
 
 export const workerProvider = workerServices.build();
 
 export async function handleJob(job: { id: string }) {
   return workerProvider.withScope(async (scope) => {
-    const queue = scope.resolve("Queue");
-    const log = scope.resolve("JobLogger");
+    const queue = scope.resolve(QUEUE);
+    const log = scope.resolve(JOB_LOGGER);
     log.info("processing", job.id);
     await queue.ack(job.id);
   });
@@ -83,18 +117,6 @@ function createPool(): { query: (sql: string) => Promise<any[]> } {
       return [];
     },
   };
-}
-
-class UserRepository {
-  constructor(
-    private readonly deps: { db: { query: (sql: string) => Promise<any[]> } },
-  ) {}
-  async findById(id: string) {
-    const rows = await this.deps.db.query(
-      `select * from users where id='${id}'`,
-    );
-    return rows[0];
-  }
 }
 
 function createRequestLogger() {

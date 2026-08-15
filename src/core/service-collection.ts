@@ -1,7 +1,8 @@
-import { createBinder, scopeToLifetime } from "../binding/binding";
-import type { ServiceModule } from "../binding/module";
-import { ServiceLifetime } from "./lifetime";
-import { ServiceProvider } from "./service-provider";
+import { createBinder, scopeToLifetime } from "../binding/binding.js";
+import type { ServiceModule } from "../binding/module.js";
+import { annotatedClassFactory } from "./annotations.js";
+import { ServiceLifetime } from "./lifetime.js";
+import { ServiceProvider } from "./service-provider.js";
 import type {
   BindingOptions,
   DisposeFn,
@@ -10,7 +11,7 @@ import type {
   ServiceKey,
   Token,
   TraceEvent,
-} from "./types";
+} from "./types.js";
 
 export class ServiceCollection {
   constructor(
@@ -39,6 +40,7 @@ export class ServiceCollection {
     return this;
   }
 
+  addSingleton<T>(token: new (...args: any[]) => T): this;
   addSingleton<T>(
     token: Token<T>,
     factoryOrInstance: ServiceFactory<T> | T,
@@ -49,7 +51,21 @@ export class ServiceCollection {
       disposePriority?: number;
       source?: string;
     },
+  ): this;
+  addSingleton<T>(
+    token: Token<T>,
+    factoryOrInstance?: ServiceFactory<T> | T,
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      globalKey?: string;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
+    if (arguments.length === 1) {
+      factoryOrInstance = this.classFactoryFor(token);
+    }
     const factory = this.wrapFactory(factoryOrInstance);
     return this.addDescriptor(
       token,
@@ -68,6 +84,7 @@ export class ServiceCollection {
     );
   }
 
+  addGlobalSingleton<T>(token: new (...args: any[]) => T): this;
   addGlobalSingleton<T>(
     token: Token<T>,
     factoryOrInstance: ServiceFactory<T> | T,
@@ -78,7 +95,21 @@ export class ServiceCollection {
       disposePriority?: number;
       source?: string;
     },
+  ): this;
+  addGlobalSingleton<T>(
+    token: Token<T>,
+    factoryOrInstance?: ServiceFactory<T> | T,
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      globalKey?: string;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
+    if (arguments.length === 1) {
+      factoryOrInstance = this.classFactoryFor(token);
+    }
     const factory = this.wrapFactory(factoryOrInstance);
     return this.addDescriptor(
       token,
@@ -97,6 +128,7 @@ export class ServiceCollection {
     );
   }
 
+  addScoped<T>(token: new (...args: any[]) => T): this;
   addScoped<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
@@ -106,7 +138,19 @@ export class ServiceCollection {
       disposePriority?: number;
       source?: string;
     },
+  ): this;
+  addScoped<T>(
+    token: Token<T>,
+    factory?: ServiceFactory<T>,
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
+    if (arguments.length === 1) factory = this.classFactoryFor(token);
+    if (!factory) throw new TypeError("A scoped service factory is required.");
     return this.addDescriptor(
       token,
       {
@@ -123,6 +167,7 @@ export class ServiceCollection {
     );
   }
 
+  addTransient<T>(token: new (...args: any[]) => T): this;
   addTransient<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
@@ -132,7 +177,21 @@ export class ServiceCollection {
       disposePriority?: number;
       source?: string;
     },
+  ): this;
+  addTransient<T>(
+    token: Token<T>,
+    factory?: ServiceFactory<T>,
+    options?: {
+      key?: ServiceKey;
+      multiple?: boolean;
+      disposePriority?: number;
+      source?: string;
+    },
   ): this {
+    if (arguments.length === 1) factory = this.classFactoryFor(token);
+    if (!factory) {
+      throw new TypeError("A transient service factory is required.");
+    }
     return this.addDescriptor(
       token,
       {
@@ -156,6 +215,23 @@ export class ServiceCollection {
       ),
       { trace: this.defaults.trace },
     );
+  }
+
+  /**
+   * .NET-style provider builder with an optional registration validation gate.
+   */
+  buildServiceProvider(options?: {
+    validateOnBuild?: boolean;
+    requireKeysForMultiple?: boolean;
+  }): ServiceProvider {
+    const provider = this.build();
+    if (options?.validateOnBuild) {
+      provider.validateGraph({
+        throwOnError: true,
+        requireKeysForMultiple: options.requireKeysForMultiple,
+      });
+    }
+    return provider;
   }
 
   private wrapFactory<T>(
@@ -187,6 +263,15 @@ export class ServiceCollection {
       return fn;
     }
     return () => factoryOrInstance as T;
+  }
+
+  private classFactoryFor<T>(token: Token<T>): ServiceFactory<T> {
+    if (typeof token !== "function") {
+      throw new TypeError(
+        "A service factory or instance is required for non-class tokens.",
+      );
+    }
+    return annotatedClassFactory(token as new (...args: any[]) => T);
   }
 
   private addDescriptor<T>(

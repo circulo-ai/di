@@ -3,15 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AsyncFactoryError,
   CircularDependencyError,
+  DisposedScopeError,
   MissingServiceError,
   ScopeResolutionError,
   ServiceCollection,
   ServiceLifetime,
   ServiceScope,
+  annotate,
   bindToHono,
   createContainerMiddleware,
-  createServiceLocator,
   createModule,
+  createServiceLocator,
   createToken,
   decorateContext,
   factory,
@@ -19,6 +21,7 @@ import {
   ifDev,
   ifProd,
   ifTruthy,
+  injectable,
   lazy,
   optional,
   resolveFromContext,
@@ -399,15 +402,16 @@ describe("Hono helpers", () => {
     const next = vi.fn(async () => {
       const container = (ctx as any).var.container;
       container.resolve("Disposable");
+      const requestId = resolveFromContext<string>(ctx as any, "RequestId");
+      expect(requestId).toMatch(/^req-/);
+      const missing = tryResolveFromContext<string>(ctx as any, "Nope");
+      expect(missing).toBeUndefined();
     });
     await middleware(ctx as any, next);
     expect(next).toHaveBeenCalled();
-
-    const requestId = resolveFromContext<string>(ctx as any, "RequestId");
-    expect(requestId).toMatch(/^req-/);
-    const missing = tryResolveFromContext<string>(ctx as any, "Nope");
-    expect(missing).toBeUndefined();
-
+    expect(() => resolveFromContext(ctx as any, "RequestId")).toThrow(
+      DisposedScopeError,
+    );
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -431,9 +435,13 @@ describe("Hono helpers", () => {
       var: {},
       set: (k: string, v: unknown) => ((ctx.var as any)[k] = v),
     };
-    await middleware(ctx as any, async () => {});
-    const value = resolveFromContext<number>(ctx as any, "Value", "scope");
-    expect(value).toBe(123);
+    await middleware(ctx as any, async () => {
+      const value = resolveFromContext<number>(ctx as any, "Value", "scope");
+      expect(value).toBe(123);
+    });
+    expect(() => resolveFromContext(ctx as any, "Value", "scope")).toThrow(
+      DisposedScopeError,
+    );
   });
 
   it("bindToHono strict proxy resolves registered tokens", async () => {
@@ -1331,7 +1339,7 @@ describe("service scope internals", () => {
 });
 
 describe("dispose helpers", () => {
-  it("invokes Symbol-based disposers and function disposers", async () => {
+  it("invokes Symbol-based disposers without calling function-valued services", async () => {
     const asyncSym = (Symbol as any).asyncDispose;
     const syncSym = (Symbol as any).dispose;
 
@@ -1351,6 +1359,243 @@ describe("dispose helpers", () => {
 
     expect(asyncDispose).toHaveBeenCalled();
     expect(syncDispose).toHaveBeenCalled();
-    expect(fnDispose).toHaveBeenCalled();
+    expect(fnDispose).not.toHaveBeenCalled();
+  });
+});
+
+describe("annotation-based injection", () => {
+  it("supports decorator metadata with positional constructor dependencies", () => {
+    const Logger = createToken<{ name: string }>("Logger");
+
+    class Service {
+      constructor(readonly logger: { name: string }) {}
+    }
+    injectable([Logger])(Service);
+
+    const services = new ServiceCollection().addSingleton(Logger, {
+      name: "production",
+    });
+    services.bind(Service).toClass(Service);
+
+    expect(services.build().resolve(Service).logger.name).toBe("production");
+  });
+
+  it("supports annotation without decorator syntax and dependency objects", () => {
+    class Service {
+      constructor(readonly dependencies: { value: number }) {}
+    }
+    annotate(Service, { value: "Value" });
+
+    const services = new ServiceCollection().addSingleton("Value", 42);
+    services.bind(Service).toClass(Service);
+
+    expect(services.build().resolve(Service).dependencies.value).toBe(42);
+  });
+
+  it("rejects invalid annotation tokens eagerly", () => {
+    class Service {}
+    expect(() => annotate(Service, [null as any])).toThrow(TypeError);
+  });
+
+  it("supports .NET-style self registration for annotated classes", async () => {
+    const Value = createToken<number>("Value");
+
+    class ScopedService {
+      constructor(readonly value: number) {}
+    }
+    injectable([Value])(ScopedService);
+
+    const services = new ServiceCollection()
+      .addSingleton(Value, 7)
+      .addScoped(ScopedService);
+    const provider = services.buildServiceProvider({ validateOnBuild: true });
+    const scope = provider.createScope();
+
+    expect(scope.serviceProvider.getRequiredService(ScopedService).value).toBe(
+      7,
+    );
+    expect(scope.getService("Missing")).toBeUndefined();
+    expect(scope.getServices(ScopedService)).toHaveLength(1);
+    await scope.disposeAsync();
+  });
+
+  it("does not hide factory failures behind getService", () => {
+    const provider = new ServiceCollection()
+      .addTransient("Broken", () => {
+        throw new Error("factory failed");
+      })
+      .buildServiceProvider();
+
+    expect(provider.getService("Missing")).toBeUndefined();
+    expect(() => provider.getService("Broken")).toThrow("factory failed");
+    expect(() => provider.getRequiredService("Missing")).toThrow(
+      MissingServiceError,
+    );
+  });
+});
+
+describe("production lifecycle guards", () => {
+  it("detects circular scoped dependencies", () => {
+    const services = new ServiceCollection()
+      .addScoped("A", (resolver) => resolver.resolve("B"))
+      .addScoped("B", (resolver) => resolver.resolve("A"));
+    const scope = services.build().createScope();
+
+    expect(() => scope.resolve("A")).toThrow(CircularDependencyError);
+  });
+
+  it("preserves scope context for resolveAll inside factories", () => {
+    const services = new ServiceCollection()
+      .addScoped("Part", () => ({ id: 1 }), { multiple: true })
+      .addScoped("Composite", (resolver) => resolver.resolveAll("Part"));
+    const scope = services.build().createScope();
+
+    expect(scope.resolve<Array<{ id: number }>>("Composite")).toEqual([
+      { id: 1 },
+    ]);
+  });
+
+  it("resolves keyed scoped services through a scope map", () => {
+    const scope = new ServiceCollection()
+      .addScoped("Part", () => ({ id: 1 }), {
+        key: "primary",
+        multiple: true,
+      })
+      .build()
+      .createScope();
+
+    expect(scope.resolveMap<{ id: number }>("Part").primary.id).toBe(1);
+  });
+
+  it("retries singleton and scoped async factories after rejection", async () => {
+    let singletonAttempts = 0;
+    let scopedAttempts = 0;
+    const services = new ServiceCollection()
+      .addSingleton("Singleton", async () => {
+        singletonAttempts += 1;
+        if (singletonAttempts === 1) throw new Error("first singleton failure");
+        return "singleton";
+      })
+      .addScoped("Scoped", async () => {
+        scopedAttempts += 1;
+        if (scopedAttempts === 1) throw new Error("first scoped failure");
+        return "scoped";
+      });
+    const provider = services.build();
+    const scope = provider.createScope();
+
+    await expect(provider.resolveAsync("Singleton")).rejects.toThrow(
+      "first singleton failure",
+    );
+    await expect(provider.resolveAsync("Singleton")).resolves.toBe("singleton");
+    await expect(scope.resolveAsync("Scoped")).rejects.toThrow(
+      "first scoped failure",
+    );
+    await expect(scope.resolveAsync("Scoped")).resolves.toBe("scoped");
+  });
+
+  it("retries a global async factory after rejection", async () => {
+    const token = createToken<string>("retry-global");
+    let attempts = 0;
+    const provider = new ServiceCollection()
+      .addGlobalSingleton(token, async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("first global failure");
+        return "global";
+      })
+      .build();
+
+    await expect(provider.resolveAsync(token)).rejects.toThrow(
+      "first global failure",
+    );
+    await expect(provider.resolveAsync(token)).resolves.toBe("global");
+    const cache = (globalThis as any)[Symbol.for("@circulo-ai/di:globals")];
+    cache?.clear();
+  });
+
+  it("caches undefined singleton and scoped values", () => {
+    const singletonFactory = vi.fn(() => undefined);
+    const scopedFactory = vi.fn(() => undefined);
+    const provider = new ServiceCollection()
+      .addSingleton("Singleton", singletonFactory)
+      .addScoped("Scoped", scopedFactory)
+      .build();
+    const scope = provider.createScope();
+
+    provider.resolve("Singleton");
+    provider.resolve("Singleton");
+    scope.resolve("Scoped");
+    scope.resolve("Scoped");
+    expect(singletonFactory).toHaveBeenCalledTimes(1);
+    expect(scopedFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks resolution and disposal hooks after scope disposal", async () => {
+    const scope = new ServiceCollection().build().createScope();
+    await scope.dispose();
+
+    expect(() => scope.resolve("Missing")).toThrow(DisposedScopeError);
+    expect(() => scope.tryResolve("Missing")).toThrow(DisposedScopeError);
+    await expect(scope.resolveAsync("Missing")).rejects.toThrow(
+      DisposedScopeError,
+    );
+    await expect(scope.tryResolveAsync("Missing")).rejects.toThrow(
+      DisposedScopeError,
+    );
+    expect(() => scope.resolveAll("Missing")).toThrow(DisposedScopeError);
+    expect(() => scope.resolveMap("Missing")).toThrow(DisposedScopeError);
+    expect(() => scope.onDispose(() => {})).toThrow(DisposedScopeError);
+  });
+
+  it("waits for in-flight scoped creation before disposing", async () => {
+    const dispose = vi.fn();
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const scope = new ServiceCollection()
+      .addScoped("Resource", async () => {
+        await gate;
+        return { dispose };
+      })
+      .build()
+      .createScope();
+
+    const resolution = scope.resolveAsync("Resource");
+    const disposal = scope.dispose();
+    finish();
+    await resolution;
+    await disposal;
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps distinct global tokens with the same label isolated", () => {
+    const First = createToken<number>("duplicate-label");
+    const Second = createToken<number>("duplicate-label");
+    const provider = new ServiceCollection()
+      .addGlobalSingleton(First, 1)
+      .addGlobalSingleton(Second, 2)
+      .build();
+
+    expect(provider.resolve(First)).toBe(1);
+    expect(provider.resolve(Second)).toBe(2);
+    const cache = (globalThis as any)[Symbol.for("@circulo-ai/di:globals")];
+    cache?.clear();
+  });
+
+  it("handles prototype-like keys safely in resolveMap", () => {
+    const provider = new ServiceCollection()
+      .addSingleton("Value", "safe", {
+        key: "__proto__",
+        multiple: true,
+      })
+      .build();
+
+    const values = provider.resolveMap<string>("Value");
+    expect(Object.prototype.hasOwnProperty.call(values, "__proto__")).toBe(
+      true,
+    );
+    expect(values.__proto__).toBe("safe");
+    expect(Object.getPrototypeOf(values)).toBe(Object.prototype);
   });
 });

@@ -1,11 +1,12 @@
 # @circulo-ai/di
 
-A lightweight dependency injection toolkit with singleton, scoped, global-singleton, and transient lifetimes plus Hono helpers. No decorators, no reflect metadata—just factories and tokens (sync or async).
+A lightweight, type-safe dependency injection toolkit with singleton, scoped, global-singleton, and transient lifetimes plus Hono and Next.js helpers. It is reflection-free by default, with optional class annotations that do not require `reflect-metadata`.
 
 ## What's Inside
 
 - **ServiceCollection**: Register services with lifetimes (`Singleton`, `GlobalSingleton`, `Scoped`, `Transient`), defaults (allowOverwrite/defaultMultiple), metadata (registeredAt/source), and dispose priorities.
 - **Binding DSL**: `services.bind(Token).toValue/toFunction/toFactory/toClass/toHigherOrderFunction` with array/object dependencies and `scope` aliases for lifetimes.
+- **Optional annotations**: `injectable(dependencies)` or `annotate(Class, dependencies)` for reflection-free constructor injection.
 - **ServiceProvider**: Root container with singleton/global caches, async-aware resolution, scopes, disposal hooks, tracing, and `withScope`.
 - **ServiceScope**: Per-request/per-operation scoped instances with disposal ordering and async caching.
 - **Hono Helpers**: `bindToHono` for one-liner setup; `decorateContext` for “put it on `c.var`”; strict/memoized proxies.
@@ -23,9 +24,19 @@ bun add @circulo-ai/di
 ## Quickstart
 
 ```ts
-import { ServiceCollection, ServiceLifetime } from "@circulo-ai/di";
+import {
+  ServiceCollection,
+  createToken,
+  factory,
+  lazy,
+  optional,
+} from "@circulo-ai/di";
 
 const services = new ServiceCollection();
+const TYPES = {
+  Logger: createToken<Logger>("Logger"),
+  Cache: createToken<Cache>("Cache"),
+} as const;
 
 // Singleton
 services.addSingleton("Config", { port: 3000 });
@@ -37,32 +48,17 @@ services.addScoped("RequestId", () => crypto.randomUUID());
 services.addTransient("Now", () => () => new Date());
 
 // Multiple/Keyed registrations
-services.addSingleton("Cache", () => primaryCache, {
+services.addSingleton(TYPES.Cache, () => primaryCache, {
   key: "primary",
   multiple: true,
 });
-services.addSingleton("Cache", () => secondaryCache, {
+services.addSingleton(TYPES.Cache, () => secondaryCache, {
   key: "secondary",
   multiple: true,
 });
 
-const provider = services.build();
-const scope = provider.createScope();
-
-const config = scope.resolve<{ port: number }>("Config");
-const requestId = scope.resolve<string>("RequestId");
-const primary = scope.resolve("Cache", "primary");
-const caches = scope.resolveAll("Cache"); // [secondary, primary] (last wins unless keyed)
-const byKey = scope.resolveMap("Cache"); // { primary: primaryCache, secondary: secondaryCache }
-
-// Optional resolution
-const maybeMissing = scope.tryResolve("Missing"); // undefined instead of throw
-const maybeMissing2 = scope.resolve(optional("Missing")); // undefined
-
 // Async factories
 services.addSingleton("AsyncDb", async () => connectDb());
-const db = await provider.resolveAsync("AsyncDb");
-// provider.resolve("AsyncDb") will throw while the async factory is in-flight
 
 // Binding DSL with array/object deps and scope aliases
 services
@@ -78,6 +74,55 @@ services.bind(TYPES.Logger).toClass(Logger);
 // Factory/lazy helpers
 services.addTransient("DbFactory", factory("AsyncDb"));
 services.addScoped("LazyConfig", lazy("Config"));
+
+const provider = services.build();
+
+await provider.withScope(async (scope) => {
+  const config = scope.resolve<{ port: number }>("Config");
+  const requestId = scope.resolve<string>("RequestId");
+  const primary = scope.resolve(TYPES.Cache, "primary");
+  const caches = scope.resolveAll(TYPES.Cache); // registration order
+  const byKey = scope.resolveMap(TYPES.Cache);
+  const maybeMissing = scope.resolve(optional("Missing")); // undefined
+  const db = await scope.resolveAsync("AsyncDb");
+});
+```
+
+## Optional class annotations
+
+Annotations are explicit and do not inspect TypeScript design types or load `reflect-metadata`. Array dependencies are passed as positional constructor arguments; object dependencies are passed as one object.
+
+```ts
+import { ServiceCollection, createToken, injectable } from "@circulo-ai/di";
+
+const LOGGER = createToken<Logger>("Logger");
+
+@injectable([LOGGER])
+class UserService {
+  constructor(readonly logger: Logger) {}
+}
+
+const services = new ServiceCollection().addSingleton(LOGGER, new Logger());
+services.bind(UserService).toClass(UserService);
+
+// If decorator syntax is disabled, use:
+// annotate(UserService, [LOGGER]);
+```
+
+For a Microsoft.Extensions.DependencyInjection-style workflow, use the class as both implementation and token:
+
+```ts
+const services = new ServiceCollection()
+  .addSingleton(Logger)
+  .addScoped(UserService)
+  .addTransient(CommandHandler);
+
+const provider = services.buildServiceProvider({ validateOnBuild: true });
+await provider.withScope(async (scope) => {
+  const users = scope.serviceProvider.getRequiredService(UserService);
+  const optionalCache = scope.getService(Cache); // undefined if unregistered
+  const handlers = scope.getServices(CommandHandler);
+});
 ```
 
 ## Service locator helper
@@ -88,7 +133,7 @@ import {
   createServiceLocator,
   createToken,
   optional,
-} from "@circulo-ai/di"; 
+} from "@circulo-ai/di";
 
 const TYPES = {
   Config: createToken<{ port: number }>("Config"),
@@ -120,6 +165,7 @@ const maybeCache = locator.db.cache;
 - **Pick the right lifetime**: `GlobalSingleton` for expensive process-wide things (DB pools); `Singleton` for app-level caches; `Scoped` per request/task; `Transient` for pure, cheap objects. Avoid scoped resolution from the root—always resolve through a scope/middleware.
 - **Prefer tokens over strings**: `createToken<T>("Name")` keeps types tight and avoids collision. Use `optional(token)` for soft dependencies.
 - **Binder DSL for ergonomic wiring**: `bind(Token).toValue|toFactory|toClass|toHigherOrderFunction` with array/object deps; use `scope` for lifetimes and `{ async: true }` when dep factories are async.
+- **.NET-style vocabulary**: annotated classes can self-register with `addSingleton(Class)`, `addScoped(Class)`, or `addTransient(Class)`. Use `buildServiceProvider`, `getRequiredService`, `getService`, and `getServices` when that reads more naturally to your team.
 - **Keyed multi-bindings**: set `{ multiple: true, key: "primary" }` and use `resolveMap` for clarity; avoid mixing keyed/unkeyed for the same token.
 - **Async factories**: always resolve with `resolveAsync`; sync resolve will throw while in flight. Use `factory(token)` to inject lazy calls and `lazy(token)` to memoize per scope.
 - **Dispose eagerly**: wrap work in `provider.withScope` or `withRequestScope` (Next) and call `provider.dispose()` on shutdown. Add `disposePriority` for ordered teardown.
@@ -127,7 +173,7 @@ const maybeCache = locator.db.cache;
 - **Environment guards**: wrap optional services with `ifProd/ifDev/ifTruthy` to keep registration clean.
 - **Validate and trace**: run `provider.validateGraph({ throwOnError: true })` locally to catch duplicates/missing tokens; pass `trace` to `ServiceCollection` to log resolution paths during debugging.
 - **Testing overrides**: set `allowOverwrite: true` in tests, re-register tokens with fakes, or compose a new `ServiceCollection` per test. Use `useExisting` to alias mocks without changing consumers.
-- **Hot-reload safety**: prefer `GlobalSingleton` or `getGlobalProvider` in dev servers/Next.js to avoid duplicate pools; keep disposers on value providers for clean reloads.
+- **Hot-reload safety**: prefer `GlobalSingleton` or `getGlobalProvider` in dev servers/Next.js to avoid duplicate pools. Set an explicit `globalKey` when the token itself is recreated during hot reload.
 - **Edge vs Node**: on Edge runtimes, avoid `globalThis` if not needed; prefer scoped lifetimes and per-request factories for lightweight objects.
 - **Avoid hidden singletons**: keep most services scoped/transient and only elevate to singleton/global when necessary; use `trace` to spot unintended sharing.
 
@@ -172,6 +218,14 @@ app.get("/ping", (c) => {
 
 ## Real-world examples
 
+Executable examples are included with the package:
+
+- [`examples/annotations.ts`](./examples/annotations.ts): positional and named annotation metadata, optional dependencies, async constructor dependencies, scoped lifetimes, and graph validation.
+- [`examples/real-world.ts`](./examples/real-world.ts): Next.js-style request scopes, feature modules, keyed tokens, and background workers.
+- [`examples/hono`](./examples/hono): a complete Hono server using an annotated request-scoped service.
+
+Run the annotation example with `bun examples/annotations.ts` after building the package, or validate every example with `bun run test:examples`.
+
 ### Next.js App Route (Node/Edge)
 
 ```ts
@@ -215,9 +269,9 @@ export const GET = withRequestScope(
 // user.module.ts
 import { createModule } from "@circulo-ai/di";
 export const TYPES = { UserRepo: "UserRepo", GetUser: "GetUser" } as const;
-export const userModule = createModule()
-  .bind(TYPES.UserRepo)
-  .toClass(UserRepository, { db: "Db" })
+const userModule = createModule();
+userModule.bind(TYPES.UserRepo).toClass(UserRepository, { db: "Db" });
+userModule
   .bind(TYPES.GetUser)
   .toHigherOrderFunction(
     (repo) => (id: string) => repo.findById(id),
@@ -263,13 +317,13 @@ export async function handleJob(payload: any) {
 ## Lifetimes
 
 - **Singleton**: One instance for the app lifetime (per provider).
-- **GlobalSingleton**: One instance per process (hot-reload safe via `globalThis`).
+- **GlobalSingleton**: One instance per token identity in the process. Supply `globalKey` for stable reuse when hot reload recreates a token.
 - **Scoped**: One instance per `ServiceScope` (commonly per request).
 - **Transient**: New instance every resolution.
 
 ## Disposal
 
-If a resolved instance exposes `dispose`, `close`, `destroy`, `Symbol.dispose`, or `Symbol.asyncDispose`, scopes and providers will call them when disposed. You can also register manual hooks with `scope.onDispose` / `provider.onDispose`, or run work in `provider.withScope(fn)` to auto-dispose.
+If a resolved object exposes `dispose`, `close`, `destroy`, `Symbol.dispose`, or `Symbol.asyncDispose`, scopes and providers call it when disposed. Function-valued services are never invoked as disposers. You can also register manual hooks with `scope.onDispose` / `provider.onDispose`, or run work in `provider.withScope(fn)` to auto-dispose. A disposed scope is terminal and throws `DisposedScopeError` if reused.
 
 - Scoped instances dispose in reverse resolve order; use `disposePriority` to override (higher runs first). Singletons honor the same priority and order.
 - Custom disposers on value providers: `addSingleton(token, { value, dispose })`.
@@ -300,13 +354,14 @@ await provider.dispose(); // cleans up singletons
 
 ```bash
 bun --cwd packages/di run typecheck
-bun --cwd packages/di run build
+bun --cwd packages/di run check
+bun --cwd packages/di run test:examples
 ```
 
 ## Publishing
 
 ```bash
-bun -cwd packages/di run release
+bun --cwd packages/di run release
 ```
 
-The `release` script builds and publishes with `--access public`. `prepack` also runs the build automatically if you publish manually.
+The `release` script publishes with public access. npm runs `prepack`, which type-checks, tests, cleans stale output, and builds before creating the tarball.

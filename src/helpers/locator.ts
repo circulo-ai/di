@@ -1,19 +1,22 @@
 import type {
+  InjectionToken,
   OptionalToken,
   ServiceResolver,
-  Token,
   TokenLike,
-} from "../core/types";
+} from "../core/types.js";
 
 export type TokenTree = {
   [key: string]: TokenTree | TokenLike;
 };
 
-type ResolveToken<T> = T extends Token<infer R>
-  ? R
-  : T extends { __optional: true; token: Token<infer R> }
-    ? R | undefined
-    : never;
+type ResolveToken<T> =
+  T extends InjectionToken<infer R>
+    ? R
+    : T extends abstract new (...args: any[]) => infer R
+      ? R
+      : T extends OptionalToken<infer R>
+        ? R | undefined
+        : never;
 
 export type ResolvedServices<T extends TokenTree> = {
   [K in keyof T]: T[K] extends TokenLike

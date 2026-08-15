@@ -4,6 +4,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": "../..",
+    "paths": {
+      "@circulo-ai/di": ["dist/index.d.ts"]
+    },
+    "skipLibCheck": true,
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
     "types": ["bun"]

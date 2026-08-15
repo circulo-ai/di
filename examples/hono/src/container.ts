@@ -1,14 +1,7 @@
-import {
-  ServiceCollection,
-  type ServiceProvider,
-  type Token,
-} from "@circulo-ai/di";
+import { ServiceCollection, type ServiceProvider } from "@circulo-ai/di";
 import { GreetingService, TimeService } from "./services";
-
-export const DI_TOKENS = {
-  GreetingService: Symbol("GreetingService") as Token<GreetingService>,
-  TimeService: Symbol("TimeService") as Token<TimeService>,
-} as const;
+import { DI_TOKENS } from "./tokens";
+export { DI_TOKENS } from "./tokens";
 
 let rootProvider: ServiceProvider | null = null;
 
@@ -20,10 +13,9 @@ export function buildProvider(): ServiceProvider {
   const services = new ServiceCollection();
 
   services.addSingleton(DI_TOKENS.TimeService, () => new TimeService());
-  services.addScoped(
-    DI_TOKENS.GreetingService,
-    (resolver) => new GreetingService(resolver.resolve(DI_TOKENS.TimeService)),
-  );
+  services
+    .bind(DI_TOKENS.GreetingService)
+    .toAnnotatedClass(GreetingService, { scope: "scoped" });
 
   rootProvider = services.build();
   return rootProvider;
