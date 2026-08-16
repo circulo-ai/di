@@ -24,17 +24,17 @@
     "typescript",
     "hono"
   ],
-  "author": "mhbdev/Circulo <1839491@gmail.com>",
+  "author": "Circulo AI",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mhbdev/circulo.git"
+    "url": "git+https://github.com/circulo-ai/circulo.git"
   },
   "bugs": {
-    "url": "https://github.com/mhbdev/circulo/issues"
+    "url": "https://github.com/circulo-ai/circulo/issues"
   },
-  "homepage": "https://github.com/mhbdev/circulo#readme",
+  "homepage": "https://github.com/circulo-ai/circulo#readme",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
