@@ -1,6 +1,6 @@
 {
   "name": "@circulo-ai/di",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
@@ -46,13 +46,13 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "tsc -p tsconfig.json --watch",
+    "dev": "bun ./node_modules/typescript/bin/tsc -p tsconfig.json --watch",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "bun ./node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
     "check": "bun run clean && bun run typecheck && bun run test && bun run build && bun run test:package && bun run test:examples",
     "prepack": "bun run check",
-    "test": "vitest run",
+    "test": "bun ./node_modules/vitest/vitest.mjs run",
     "test:package": "node --input-type=module -e \"const di=await import('./dist/index.js');const ok=new di.ServiceCollection().addSingleton('ready',true).build().resolve('ready');if(!ok)process.exit(1)\"",
     "test:examples": "tsc --noEmit -p tsconfig.examples.json && tsc --noEmit -p examples/hono/tsconfig.json && bun examples/annotations.ts && bun examples/real-world.ts && bun examples/hono/src/smoke.ts",
     "test:watch": "vitest",
