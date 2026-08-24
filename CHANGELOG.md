@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.3.0
+
+### Minor Changes
+
+- Release the accumulated public-package improvements, including the upload
+  provider adapters, FTP/FTPS support, typed file routers, React upload helpers,
+  and the associated runtime and developer-experience updates.
+
 ## 3.2.1
 
 ### Patch Changes
