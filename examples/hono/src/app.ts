@@ -1,4 +1,4 @@
-import { createContainerMiddleware } from "@circulo-ai/di";
+import { createContainerMiddleware } from "@circulo-ai/di/hono";
 import { Hono } from "hono";
 import { buildProvider, type RequestScope } from "./container";
 import { requestDi } from "./di-context";

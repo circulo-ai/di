@@ -22,7 +22,8 @@
     "ioc",
     "container",
     "typescript",
-    "hono"
+    "hono",
+    "nextjs"
   ],
   "author": "Circulo AI",
   "main": "./dist/index.js",
@@ -40,6 +41,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.ts",
+      "import": "./dist/hono.js",
+      "default": "./dist/hono.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js",
+      "default": "./dist/next.js"
     }
   },
   "publishConfig": {

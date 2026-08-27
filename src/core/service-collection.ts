@@ -1,16 +1,20 @@
 import { createBinder, scopeToLifetime } from "../binding/binding.js";
 import type { ServiceModule } from "../binding/module.js";
-import { annotatedClassFactory } from "./annotations.js";
+import { annotatedClassFactory, getInjectionMetadata } from "./annotations.js";
 import { ServiceLifetime } from "./lifetime.js";
 import { ServiceProvider } from "./service-provider.js";
 import type {
   BindingOptions,
+  ClassConstructor,
+  DependencyArray,
+  DependencyObject,
   DisposeFn,
   ServiceDescriptor,
   ServiceFactory,
-  ServiceKey,
+  ServiceRegistrationOptions,
   Token,
   TraceEvent,
+  ValueProvider,
 } from "./types.js";
 
 export class ServiceCollection {
@@ -43,25 +47,13 @@ export class ServiceCollection {
   addSingleton<T>(token: new (...args: any[]) => T): this;
   addSingleton<T>(
     token: Token<T>,
-    factoryOrInstance: ServiceFactory<T> | T,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      globalKey?: string;
-      disposePriority?: number;
-      source?: string;
-    },
+    factoryOrInstance: ServiceFactory<T> | T | ValueProvider<T>,
+    options?: ServiceRegistrationOptions,
   ): this;
   addSingleton<T>(
     token: Token<T>,
-    factoryOrInstance?: ServiceFactory<T> | T,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      globalKey?: string;
-      disposePriority?: number;
-      source?: string;
-    },
+    factoryOrInstance?: ServiceFactory<T> | T | ValueProvider<T>,
+    options?: ServiceRegistrationOptions,
   ): this {
     if (arguments.length === 1) {
       factoryOrInstance = this.classFactoryFor(token);
@@ -79,6 +71,9 @@ export class ServiceCollection {
         disposePriority: options?.disposePriority ?? 0,
         registeredAt: new Date(),
         source: options?.source ?? this.captureSource(),
+        dependencies: options?.dependencies ?? this.classDependencies(token),
+        disposal:
+          options?.disposal ?? defaultDisposal(ServiceLifetime.Singleton),
       },
       options,
     );
@@ -87,25 +82,13 @@ export class ServiceCollection {
   addGlobalSingleton<T>(token: new (...args: any[]) => T): this;
   addGlobalSingleton<T>(
     token: Token<T>,
-    factoryOrInstance: ServiceFactory<T> | T,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      globalKey?: string;
-      disposePriority?: number;
-      source?: string;
-    },
+    factoryOrInstance: ServiceFactory<T> | T | ValueProvider<T>,
+    options?: ServiceRegistrationOptions,
   ): this;
   addGlobalSingleton<T>(
     token: Token<T>,
-    factoryOrInstance?: ServiceFactory<T> | T,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      globalKey?: string;
-      disposePriority?: number;
-      source?: string;
-    },
+    factoryOrInstance?: ServiceFactory<T> | T | ValueProvider<T>,
+    options?: ServiceRegistrationOptions,
   ): this {
     if (arguments.length === 1) {
       factoryOrInstance = this.classFactoryFor(token);
@@ -123,6 +106,9 @@ export class ServiceCollection {
         disposePriority: options?.disposePriority ?? 0,
         registeredAt: new Date(),
         source: options?.source ?? this.captureSource(),
+        dependencies: options?.dependencies ?? this.classDependencies(token),
+        disposal:
+          options?.disposal ?? defaultDisposal(ServiceLifetime.GlobalSingleton),
       },
       options,
     );
@@ -132,22 +118,12 @@ export class ServiceCollection {
   addScoped<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      disposePriority?: number;
-      source?: string;
-    },
+    options?: ServiceRegistrationOptions,
   ): this;
   addScoped<T>(
     token: Token<T>,
     factory?: ServiceFactory<T>,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      disposePriority?: number;
-      source?: string;
-    },
+    options?: ServiceRegistrationOptions,
   ): this {
     if (arguments.length === 1) factory = this.classFactoryFor(token);
     if (!factory) throw new TypeError("A scoped service factory is required.");
@@ -162,6 +138,8 @@ export class ServiceCollection {
         disposePriority: options?.disposePriority ?? 0,
         registeredAt: new Date(),
         source: options?.source ?? this.captureSource(),
+        dependencies: options?.dependencies ?? this.classDependencies(token),
+        disposal: options?.disposal ?? defaultDisposal(ServiceLifetime.Scoped),
       },
       options,
     );
@@ -171,22 +149,12 @@ export class ServiceCollection {
   addTransient<T>(
     token: Token<T>,
     factory: ServiceFactory<T>,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      disposePriority?: number;
-      source?: string;
-    },
+    options?: ServiceRegistrationOptions,
   ): this;
   addTransient<T>(
     token: Token<T>,
     factory?: ServiceFactory<T>,
-    options?: {
-      key?: ServiceKey;
-      multiple?: boolean;
-      disposePriority?: number;
-      source?: string;
-    },
+    options?: ServiceRegistrationOptions,
   ): this {
     if (arguments.length === 1) factory = this.classFactoryFor(token);
     if (!factory) {
@@ -203,6 +171,9 @@ export class ServiceCollection {
         disposePriority: options?.disposePriority ?? 0,
         registeredAt: new Date(),
         source: options?.source ?? this.captureSource(),
+        dependencies: options?.dependencies ?? this.classDependencies(token),
+        disposal:
+          options?.disposal ?? defaultDisposal(ServiceLifetime.Transient),
       },
       options,
     );
@@ -215,6 +186,43 @@ export class ServiceCollection {
       ),
       { trace: this.defaults.trace },
     );
+  }
+
+  useValue<T>(
+    token: Token<T>,
+    value: T,
+    options?: ServiceRegistrationOptions,
+  ): this {
+    return this.addSingleton(token, { value }, options);
+  }
+
+  useFactory<T>(
+    token: Token<T>,
+    factory: ServiceFactory<T>,
+    options?: ServiceRegistrationOptions,
+  ): this {
+    return this.addSingleton(token, factory, options);
+  }
+
+  useClass<T>(
+    token: Token<T>,
+    Klass: ClassConstructor<T>,
+    dependencies?: DependencyArray | DependencyObject,
+    options?: ServiceRegistrationOptions,
+  ): this {
+    this.bind(token).toClass(Klass, dependencies, options);
+    return this;
+  }
+
+  useExisting<T>(
+    token: Token<T>,
+    existing: Token<T>,
+    options?: ServiceRegistrationOptions,
+  ): this {
+    return this.addSingleton(token, (resolver) => resolver.resolve(existing), {
+      ...options,
+      dependencies: options?.dependencies ?? [existing],
+    });
   }
 
   /**
@@ -235,15 +243,7 @@ export class ServiceCollection {
   }
 
   private wrapFactory<T>(
-    factoryOrInstance:
-      | ServiceFactory<T>
-      | T
-      | {
-          value: T;
-          dispose?: DisposeFn;
-          close?: DisposeFn;
-          destroy?: DisposeFn;
-        },
+    factoryOrInstance: ServiceFactory<T> | T | ValueProvider<T>,
   ): ServiceFactory<T> {
     if (typeof factoryOrInstance === "function") {
       return factoryOrInstance as ServiceFactory<T>;
@@ -271,7 +271,12 @@ export class ServiceCollection {
         "A service factory or instance is required for non-class tokens.",
       );
     }
-    return annotatedClassFactory(token as new (...args: any[]) => T);
+    return annotatedClassFactory(token as ClassConstructor<T>);
+  }
+
+  private classDependencies(token: Token): DependencyArray | undefined {
+    if (typeof token !== "function") return undefined;
+    return dependencyArray(getInjectionMetadata(token));
   }
 
   private addDescriptor<T>(
@@ -321,6 +326,8 @@ export class ServiceCollection {
       disposePriority: options?.disposePriority,
       globalKey: options?.globalKey,
       source: options?.source,
+      dependencies: options?.dependencies,
+      disposal: options?.disposal,
     };
     switch (lifetime) {
       case ServiceLifetime.GlobalSingleton:
@@ -357,5 +364,27 @@ export class ServiceCollection {
   /* istanbul ignore next */
   get tokens(): Token[] {
     return [...this.descriptors.keys()];
+  }
+}
+
+function dependencyArray(
+  dependencies: DependencyArray | DependencyObject | undefined,
+): DependencyArray | undefined {
+  if (!dependencies) return undefined;
+  return Array.isArray(dependencies)
+    ? dependencies
+    : Object.values(dependencies);
+}
+
+function defaultDisposal(lifetime: ServiceLifetime) {
+  switch (lifetime) {
+    case ServiceLifetime.Singleton:
+      return "provider" as const;
+    case ServiceLifetime.Scoped:
+      return "scope" as const;
+    case ServiceLifetime.GlobalSingleton:
+      return "global" as const;
+    default:
+      return "none" as const;
   }
 }

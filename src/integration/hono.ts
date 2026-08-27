@@ -27,10 +27,27 @@ export function createContainerMiddleware<
   return async (c, next) => {
     const scope = provider.createScope() as TContainer;
     c.set(variableName as "container", scope);
+    let failed = false;
+    let primaryError: unknown;
     try {
       await next();
-    } finally {
+    } catch (error) {
+      failed = true;
+      primaryError = error;
+    }
+    try {
       await scope.dispose();
+    } catch (cleanupError) {
+      if (failed) {
+        throw new AggregateError(
+          [primaryError, cleanupError],
+          "Request handling and DI scope disposal both failed.",
+        );
+      }
+      throw cleanupError;
+    }
+    if (failed) {
+      throw primaryError;
     }
   };
 }

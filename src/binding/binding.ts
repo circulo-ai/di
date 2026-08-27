@@ -74,6 +74,10 @@ export function createBinder(register: BinderRegister) {
         options?: BindingOptions,
       ) {
         const asyncMode = options?.async ?? false;
+        const bindingOptions = {
+          ...options,
+          dependencies: dependencyArray(dependencies),
+        };
         if (asyncMode) {
           registerWithOptions(async (resolver) => {
             const deps = await resolveDependencies(
@@ -82,13 +86,13 @@ export function createBinder(register: BinderRegister) {
               true,
             );
             return invokeWithDependencies(fn, deps) as ServiceFactoryResult<T>;
-          }, options);
+          }, bindingOptions);
           return;
         }
         registerWithOptions((resolver) => {
           const deps = resolveDependencies(resolver, dependencies, false);
           return invokeWithDependencies(fn, deps) as T;
-        }, options);
+        }, bindingOptions);
       },
       toCurry(
         fn: CallableFunction,
@@ -111,6 +115,10 @@ export function createBinder(register: BinderRegister) {
         const classDependencies =
           dependencies ?? getInjectionMetadata(Klass) ?? undefined;
         const asyncMode = options?.async ?? false;
+        const bindingOptions = {
+          ...options,
+          dependencies: dependencyArray(classDependencies),
+        };
         if (asyncMode) {
           registerWithOptions(async (resolver) => {
             const deps = await resolveDependencies(
@@ -122,13 +130,13 @@ export function createBinder(register: BinderRegister) {
               Klass,
               deps,
             ) as ServiceFactoryResult<T>;
-          }, options);
+          }, bindingOptions);
           return;
         }
         registerWithOptions((resolver) => {
           const deps = resolveDependencies(resolver, classDependencies, false);
           return constructWithDependencies(Klass, deps) as T;
-        }, options);
+        }, bindingOptions);
       },
     };
   };
@@ -181,4 +189,13 @@ function resolveDependencies(
       resolver.resolve(dep as TokenLike<unknown>),
     ]),
   );
+}
+
+function dependencyArray(
+  dependencies: DependencyArray | DependencyObject | undefined,
+): DependencyArray | undefined {
+  if (!dependencies) return undefined;
+  return Array.isArray(dependencies)
+    ? dependencies
+    : Object.values(dependencies);
 }

@@ -6,7 +6,8 @@
     "moduleResolution": "bundler",
     "baseUrl": "../..",
     "paths": {
-      "@circulo-ai/di": ["dist/index.d.ts"]
+      "@circulo-ai/di": ["dist/index.d.ts"],
+      "@circulo-ai/di/hono": ["dist/hono.d.ts"]
     },
     "skipLibCheck": true,
     "jsx": "react-jsx",

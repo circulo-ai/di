@@ -9,6 +9,9 @@ A lightweight, type-safe dependency injection toolkit with singleton, scoped, gl
 - **Optional annotations**: `injectable(dependencies)` or `annotate(Class, dependencies)` for reflection-free constructor injection.
 - **ServiceProvider**: Root container with singleton/global caches, async-aware resolution, scopes, disposal hooks, tracing, and `withScope`.
 - **ServiceScope**: Per-request/per-operation scoped instances with disposal ordering and async caching.
+- **Explicit provider APIs**: `useValue`, `useFactory`, `useClass`, and `useExisting` for readable application wiring.
+- **Async multi-resolution**: `resolveAllAsync` and `resolveMapAsync` for async plugin and handler collections.
+- **Ownership-aware disposal**: provider, scope, global, and opt-in transient ownership policies.
 - **Hono Helpers**: `bindToHono` for one-liner setup; `decorateContext` for “put it on `c.var`”; strict/memoized proxies.
 - **Service Locator**: `createServiceLocator` for typed, lazily-resolved proxies from nested token trees.
 - **Tokens**: `createToken`, `optional(token)` for optional resolution; keyed/multi registrations; `resolveMap` for keyed lookups; `factory`/`lazy` helpers.
@@ -87,6 +90,20 @@ await provider.withScope(async (scope) => {
   const db = await scope.resolveAsync("AsyncDb");
 });
 ```
+
+Use `resolveAllAsync()` and `resolveMapAsync()` when multi-registered factories may be asynchronous. `tryResolve()` is retained for compatibility and suppresses every resolution error; use `tryResolveMissing()` when factory, cycle, scope, and async errors must remain visible.
+
+For explicit registration vocabulary, use the provider helpers:
+
+```ts
+const services = new ServiceCollection()
+  .useValue("Config", { port: 3000 })
+  .useFactory("Clock", () => new Date())
+  .useClass(UserService, UserService, [TYPES.Logger])
+  .useExisting("PrimaryLogger", TYPES.Logger);
+```
+
+`useValue` is the unambiguous way to register a function as a value. The legacy `addSingleton(token, fn)` overload treats a function as a factory for backwards compatibility.
 
 ## Optional class annotations
 
@@ -168,7 +185,8 @@ const maybeCache = locator.db.cache;
 - **.NET-style vocabulary**: annotated classes can self-register with `addSingleton(Class)`, `addScoped(Class)`, or `addTransient(Class)`. Use `buildServiceProvider`, `getRequiredService`, `getService`, and `getServices` when that reads more naturally to your team.
 - **Keyed multi-bindings**: set `{ multiple: true, key: "primary" }` and use `resolveMap` for clarity; avoid mixing keyed/unkeyed for the same token.
 - **Async factories**: always resolve with `resolveAsync`; sync resolve will throw while in flight. Use `factory(token)` to inject lazy calls and `lazy(token)` to memoize per scope.
-- **Dispose eagerly**: wrap work in `provider.withScope` or `withRequestScope` (Next) and call `provider.dispose()` on shutdown. Add `disposePriority` for ordered teardown.
+- **Dispose eagerly**: wrap work in `provider.withScope` or `withRequestScope` (Next) and call `provider.dispose()` on shutdown. Add `disposePriority` for ordered teardown. `provider.dispose()` is terminal; use `disposeGlobalServices()` separately for process-global services.
+- **Declare resource ownership**: singleton resources belong to the provider, scoped resources belong to the scope, global singletons belong to the process, and transients are not disposed unless registered with `{ disposal: "scope" | "provider" }`.
 - **Modules for features**: group registrations with `createModule().bind(...).to...` and `services.addModule(module)` to keep domains isolated.
 - **Environment guards**: wrap optional services with `ifProd/ifDev/ifTruthy` to keep registration clean.
 - **Validate and trace**: run `provider.validateGraph({ throwOnError: true })` locally to catch duplicates/missing tokens; pass `trace` to `ServiceCollection` to log resolution paths during debugging.
@@ -197,10 +215,14 @@ provider.validateGraph({ throwOnError: true });
 ## Hono Integration
 
 ```ts
-import { bindToHono, createToken, decorateContext } from "@circulo-ai/di";
+import { ServiceCollection, createToken } from "@circulo-ai/di";
+import { bindToHono, decorateContext } from "@circulo-ai/di/hono";
 import { Hono } from "hono";
 
 const TYPES = { RequestId: createToken<string>("requestId") } as const;
+const services = new ServiceCollection().addScoped(TYPES.RequestId, () =>
+  crypto.randomUUID(),
+);
 const provider = services.build();
 const app = new Hono();
 
@@ -215,6 +237,8 @@ app.get("/ping", (c) => {
   });
 });
 ```
+
+Each request receives a fresh `ServiceScope`. Scoped instances are reused during that request and disposed after the handler finishes. If both the handler and disposal fail, the adapter throws an `AggregateError` containing both failures so the original request error is not lost. The legacy root import remains supported; new applications can import framework adapters from `@circulo-ai/di/hono` and `@circulo-ai/di/next`.
 
 ## Real-world examples
 
@@ -319,14 +343,40 @@ export async function handleJob(payload: any) {
 - **Singleton**: One instance for the app lifetime (per provider).
 - **GlobalSingleton**: One instance per token identity in the process. Supply `globalKey` for stable reuse when hot reload recreates a token.
 - **Scoped**: One instance per `ServiceScope` (commonly per request).
-- **Transient**: New instance every resolution.
+- **Transient**: New instance every resolution. Disposable transients are caller-owned by default; opt into automatic cleanup with `{ disposal: "scope" }` or `{ disposal: "provider" }`.
 
 ## Disposal
 
-If a resolved object exposes `dispose`, `close`, `destroy`, `Symbol.dispose`, or `Symbol.asyncDispose`, scopes and providers call it when disposed. Function-valued services are never invoked as disposers. You can also register manual hooks with `scope.onDispose` / `provider.onDispose`, or run work in `provider.withScope(fn)` to auto-dispose. A disposed scope is terminal and throws `DisposedScopeError` if reused.
+If a provider-, scope-, or explicitly owned service exposes `dispose`, `close`, `destroy`, `Symbol.dispose`, or `Symbol.asyncDispose`, the owning lifecycle calls it when disposed. Function-valued services are never invoked as disposers. You can also register manual hooks with `scope.onDispose` / `provider.onDispose`, or run work in `provider.withScope(fn)` to auto-dispose. A disposed scope and provider are terminal and throw `DisposedScopeError` or `DisposedProviderError` if reused.
 
 - Scoped instances dispose in reverse resolve order; use `disposePriority` to override (higher runs first). Singletons honor the same priority and order.
 - Custom disposers on value providers: `addSingleton(token, { value, dispose })`.
+- Global singletons are shared across providers and are not closed by an individual provider. Call `await disposeGlobalServices()` once during process shutdown when global cleanup is required.
+
+### Startup validation
+
+Factories can declare their dependencies so `validateGraph()` can detect missing registrations, cycles, and captive scoped dependencies before the application starts:
+
+```ts
+const provider = new ServiceCollection()
+  .addScoped("Request", () => ({ id: crypto.randomUUID() }))
+  .addSingleton(
+    "Application",
+    (resolver) => ({
+      request: resolver.resolve("Request"),
+    }),
+    {
+      dependencies: ["Request"],
+    },
+  )
+  .buildServiceProvider({ validateOnBuild: false });
+
+const diagnostics = provider.validateGraph();
+console.log(diagnostics[0].message);
+// Captive dependency: Application (singleton) depends on scoped service Request.
+```
+
+Use `buildServiceProvider({ validateOnBuild: true })` in production boot code to fail fast on validation errors. Dependency metadata is explicit because arbitrary factory closures cannot be inspected safely.
 
 ## Recipes
 
@@ -360,8 +410,11 @@ bun --cwd packages/di run test:examples
 
 ## Publishing
 
+Create a Changeset and merge the generated version pull request. The repository's GitHub Actions workflow runs the build and tests, then publishes changed public packages through npm trusted publishing. Local `npm publish` is intentionally not required.
+
 ```bash
-bun --cwd packages/di run release
+bunx changeset
+bun run version-packages
 ```
 
-The `release` script publishes with public access. npm runs `prepack`, which type-checks, tests, cleans stale output, and builds before creating the tarball.
+Before merging, npm runs the package `prepack` gate, which type-checks, tests, cleans stale output, and builds before creating the tarball. The package's direct `release` script remains for maintainers using a separate publishing setup; repository releases should use Changesets and the trusted-publisher workflow.
