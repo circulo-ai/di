@@ -56,3 +56,12 @@ export class DisposedScopeError extends Error {
     this.name = "DisposedScopeError";
   }
 }
+
+export class DisposedProviderError extends Error {
+  constructor(
+    message = "Cannot use a service provider after it has been disposed.",
+  ) {
+    super(message);
+    this.name = "DisposedProviderError";
+  }
+}

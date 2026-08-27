@@ -2,7 +2,10 @@ import type { ServiceCollection } from "../core/service-collection.js";
 
 type RegisterFn = (services: ServiceCollection) => void;
 
-const getEnv = () => process.env.NODE_ENV ?? "development";
+const getEnv = () =>
+  typeof process !== "undefined" && process.env
+    ? (process.env.NODE_ENV ?? "development")
+    : "development";
 
 export function ifProd(
   services: ServiceCollection,
@@ -25,6 +28,8 @@ export function ifTruthy(
   envVar: string,
   register: RegisterFn,
 ): ServiceCollection {
-  if (process.env[envVar]) register(services);
+  if (typeof process !== "undefined" && process.env?.[envVar]) {
+    register(services);
+  }
   return services;
 }

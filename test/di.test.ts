@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AsyncFactoryError,
   CircularDependencyError,
+  DisposedProviderError,
   DisposedScopeError,
   MissingServiceError,
   ScopeResolutionError,
@@ -16,6 +17,7 @@ import {
   createServiceLocator,
   createToken,
   decorateContext,
+  disposeGlobalServices,
   factory,
   getGlobalProvider,
   ifDev,
@@ -80,6 +82,128 @@ describe("Service lifetimes", () => {
     const a = provider.resolve<{ value: number }>("Transient");
     const b = provider.resolve<{ value: number }>("Transient");
     expect(a).not.toBe(b);
+  });
+});
+
+describe("production lifecycle and async APIs", () => {
+  it("blocks root provider use after disposal and disposes active scopes", async () => {
+    const close = vi.fn();
+    const provider = new ServiceCollection()
+      .addScoped("Resource", () => ({ close }))
+      .build();
+    const scope = provider.createScope();
+    scope.resolve("Resource");
+
+    await provider.dispose();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(() => provider.resolve("Resource")).toThrow(DisposedProviderError);
+    expect(() => provider.createScope()).toThrow(DisposedProviderError);
+    await expect(provider.dispose()).resolves.toBeUndefined();
+  });
+
+  it("resolves async multi-bindings and maps while preserving keys", async () => {
+    const token = createToken<string>("async-multiple");
+    const provider = new ServiceCollection()
+      .addTransient(token, async () => "one", {
+        key: "one",
+        multiple: true,
+      })
+      .addTransient(token, async () => "two", {
+        key: "two",
+        multiple: true,
+      })
+      .build();
+
+    await expect(provider.resolveAllAsync(token)).resolves.toEqual([
+      "one",
+      "two",
+    ]);
+    await expect(provider.resolveMapAsync(token)).resolves.toEqual({
+      one: "one",
+      two: "two",
+    });
+    await provider.dispose();
+  });
+
+  it("provides missing-only resolution without hiding factory failures", () => {
+    const provider = new ServiceCollection()
+      .addSingleton("Broken", () => {
+        throw new Error("factory failed");
+      })
+      .build();
+
+    expect(provider.tryResolveMissing("Missing")).toBeUndefined();
+    expect(() => provider.tryResolveMissing("Broken")).toThrow(
+      "factory failed",
+    );
+  });
+
+  it("tracks explicitly scope-owned transient disposables", async () => {
+    const close = vi.fn();
+    const provider = new ServiceCollection()
+      .addTransient("Transient", () => ({ close }), { disposal: "scope" })
+      .build();
+    const scope = provider.createScope();
+    scope.resolve("Transient");
+
+    await scope.dispose();
+    expect(close).toHaveBeenCalledTimes(1);
+    await provider.dispose();
+  });
+
+  it("disposes global-owned services explicitly", async () => {
+    const close = vi.fn();
+    const token = createToken<{ close: () => void }>("global-owned");
+    const provider = new ServiceCollection()
+      .addGlobalSingleton(token, { value: { close } }, { disposal: "global" })
+      .build();
+    provider.resolve(token);
+
+    await provider.dispose();
+    expect(close).not.toHaveBeenCalled();
+    await disposeGlobalServices();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates explicit dependency metadata and captive scopes", () => {
+    const provider = new ServiceCollection()
+      .addScoped("Request", () => "request")
+      .addSingleton("Application", () => "application", {
+        dependencies: ["Request"],
+      })
+      .build();
+
+    const diagnostics = provider.validateGraph();
+    expect(
+      diagnostics.some((d) => d.message.includes("Captive dependency")),
+    ).toBe(true);
+  });
+
+  it("reports missing and circular declared dependencies before resolution", () => {
+    const provider = new ServiceCollection()
+      .addSingleton("MissingOwner", () => "owner", {
+        dependencies: ["MissingDependency"],
+      })
+      .addSingleton("A", () => "a", { dependencies: ["B"] })
+      .addSingleton("B", () => "b", { dependencies: ["A"] })
+      .build();
+
+    const diagnostics = provider.validateGraph();
+    expect(
+      diagnostics.some((d) => d.message.includes("Missing dependency")),
+    ).toBe(true);
+    expect(
+      diagnostics.some((d) => d.message.includes("Circular dependency")),
+    ).toBe(true);
+  });
+
+  it("registers function values without invoking them", () => {
+    const fn = vi.fn(() => "value");
+    const provider = new ServiceCollection().useValue("Function", fn).build();
+
+    expect(provider.resolve<() => string>("Function")).toBe(fn);
+    expect(fn).not.toHaveBeenCalled();
   });
 });
 

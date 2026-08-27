@@ -404,3 +404,19 @@ const cache = provider.resolve(optional(CACHE)); // Cache | undefined
 - Always dispose scopes for background tasks (`withScope`) and root provider on shutdown.
 - Use `disposePriority` to close outward-facing servers before DB pools.
 - Enable `trace` during development; run `validateGraph` in CI for guardrails.
+
+## Production lifecycle additions
+
+The provider is terminal after `dispose()`. Active scopes are disposed before provider-owned singletons, and later provider resolution throws `DisposedProviderError`. Global singletons are shared across providers; they are not closed by an individual provider. Call `disposeGlobalServices()` once during process shutdown when global resources need explicit cleanup.
+
+Disposable transients are caller-owned by default. Opt into lifecycle ownership explicitly:
+
+```ts
+services.addTransient("RequestBuffer", () => new RequestBuffer(), {
+  disposal: "scope",
+});
+```
+
+Async multi-bindings use `resolveAllAsync()` and `resolveMapAsync()`. When a factory's dependencies are declared in registration options, `validateGraph()` can report missing dependencies, circular metadata, and singleton-to-scoped captive dependencies before startup.
+
+Use `tryResolveMissing()` and `tryResolveMissingAsync()` when only missing registrations should become `undefined`; the legacy `tryResolve()` methods continue to suppress all resolution failures for compatibility.

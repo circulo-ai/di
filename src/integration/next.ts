@@ -45,10 +45,29 @@ export function withRequestScope<
       [containerProp]: scope,
     } as TContext & { container: TScope };
 
+    let result: TResult;
+    let failed = false;
+    let primaryError: unknown;
     try {
-      return await handler(request, ctxWithContainer);
-    } finally {
-      await scope.dispose();
+      result = await handler(request, ctxWithContainer);
+    } catch (error) {
+      failed = true;
+      primaryError = error;
     }
+    try {
+      await scope.dispose();
+    } catch (cleanupError) {
+      if (failed) {
+        throw new AggregateError(
+          [primaryError, cleanupError],
+          "Request handling and DI scope disposal both failed.",
+        );
+      }
+      throw cleanupError;
+    }
+    if (failed) {
+      throw primaryError;
+    }
+    return result!;
   };
 }
