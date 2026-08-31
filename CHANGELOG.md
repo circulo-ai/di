@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.4.1
+
+### Patch Changes
+
+- bd08de9: Harden service-provider scope ownership, lifecycle checks, disposal handling, and value-provider detection during dependency resolution.
+
 ## 3.4.0
 
 ### Minor Changes
