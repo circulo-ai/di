@@ -1,4 +1,4 @@
-import { DisposedScopeError } from "./errors.js";
+import { DisposedScopeError, MissingServiceError } from "./errors.js";
 import { ServiceLifetime } from "./lifetime.js";
 import {
   disposeFunctions,
@@ -58,9 +58,12 @@ export class ServiceScope implements ServiceResolver {
 
   getService<T>(token: TokenLike<T>, key?: ServiceKey): T | undefined {
     this.assertActive();
-    const innerToken = typeof token === "object" ? token.token : token;
-    if (!this.root.getDescriptor(innerToken, key)) return undefined;
-    return this.resolve(token, key);
+    try {
+      return this.resolve(token, key);
+    } catch (error) {
+      if (error instanceof MissingServiceError) return undefined;
+      throw error;
+    }
   }
 
   getServices<T>(token: Token<T>): T[] {
@@ -244,6 +247,13 @@ export class ServiceScope implements ServiceResolver {
 
   private assertActive(): void {
     if (this.disposed) throw new DisposedScopeError();
+  }
+
+  /** @internal Allows an in-flight factory to finish while the scope drains. */
+  assertResolutionActive(owner?: ServiceDescriptor): void {
+    if (!this.disposed) return;
+    if (owner && this.scopedPromises.has(owner)) return;
+    throw new DisposedScopeError();
   }
 }
 

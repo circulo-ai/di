@@ -26,10 +26,10 @@ export function createContainerMiddleware<
   const variableName = options?.variableName ?? "container";
   return async (c, next) => {
     const scope = provider.createScope() as TContainer;
-    c.set(variableName as "container", scope);
     let failed = false;
     let primaryError: unknown;
     try {
+      c.set(variableName as "container", scope);
       await next();
     } catch (error) {
       failed = true;

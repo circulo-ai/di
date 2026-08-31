@@ -1723,3 +1723,97 @@ describe("production lifecycle guards", () => {
     expect(Object.getPrototypeOf(values)).toBe(Object.prototype);
   });
 });
+
+describe("production hardening regressions", () => {
+  it("rejects captive scoped dependencies hidden in a factory", () => {
+    const provider = new ServiceCollection()
+      .addScoped("Request", () => "request")
+      .addSingleton("Application", (resolver) => resolver.resolve("Request"))
+      .build();
+    const scope = provider.createScope();
+
+    expect(() => scope.resolve("Application")).toThrow(ScopeResolutionError);
+  });
+
+  it("invalidates resolver closures after scope disposal", async () => {
+    let retained!: { resolve(token: string): unknown };
+    const provider = new ServiceCollection()
+      .addScoped("Service", (resolver) => {
+        retained = resolver;
+        return {};
+      })
+      .build();
+    const scope = provider.createScope();
+    scope.resolve("Service");
+
+    await scope.dispose();
+
+    expect(() => retained.resolve("Service")).toThrow(DisposedScopeError);
+  });
+
+  it("allows an in-flight scoped factory to finish while disposal drains", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const provider = new ServiceCollection()
+      .addScoped("Dependency", () => "dependency")
+      .addScoped("Service", async (resolver) => {
+        await gate;
+        return resolver.resolve("Dependency");
+      })
+      .build();
+    const scope = provider.createScope();
+    const resolution = scope.resolveAsync("Service");
+    const disposal = scope.dispose();
+    finish();
+
+    await expect(resolution).resolves.toBe("dependency");
+    await expect(disposal).resolves.toBeUndefined();
+  });
+
+  it("rejects descriptors owned by another provider", () => {
+    const first = new ServiceCollection()
+      .addScoped("Service", () => "first")
+      .build();
+    const second = new ServiceCollection().build();
+    const descriptor = first.getDescriptor("Service")!;
+    const scope = second.createScope();
+
+    expect(() => scope.getOrCreate(descriptor)).toThrow(
+      /does not belong to this provider/,
+    );
+  });
+
+  it("creates immutable optional tokens and rejects invalid wrappers", () => {
+    const token = createToken<number>("immutable-optional");
+    const wrapped = optional(token);
+    expect(Object.isFrozen(wrapped)).toBe(true);
+    expect(() => optional(null as any)).toThrow(TypeError);
+
+    const provider = new ServiceCollection().build();
+    expect(() =>
+      provider.resolve({ __optional: true, token: null } as any),
+    ).toThrow(TypeError);
+  });
+
+  it("does not treat prototype properties as existing global providers", () => {
+    const key = "__proto__";
+    const provider = new ServiceCollection().build();
+
+    const resolved = getGlobalProvider(() => provider, key);
+
+    expect(resolved).toBe(provider);
+    expect(Object.prototype.hasOwnProperty.call(globalThis, key)).toBe(true);
+    delete (globalThis as any)[key];
+  });
+
+  it("keeps plain value-shaped service instances intact", () => {
+    const instance = { value: 3 };
+    const provider = new ServiceCollection()
+      .addSingleton("Value", instance)
+      .build();
+
+    expect(provider.resolve("Value")).toBe(instance);
+  });
+});

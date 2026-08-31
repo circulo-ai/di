@@ -17,6 +17,8 @@ import type {
   ValueProvider,
 } from "./types.js";
 
+const VALUE_PROVIDER_MARKER = Symbol("@circulo-ai/di/value-provider");
+
 export class ServiceCollection {
   constructor(
     private readonly defaults: {
@@ -193,7 +195,24 @@ export class ServiceCollection {
     value: T,
     options?: ServiceRegistrationOptions,
   ): this {
-    return this.addSingleton(token, { value }, options);
+    const valueProvider = Object.create(null) as ValueProvider<T> & {
+      [VALUE_PROVIDER_MARKER]: true;
+    };
+    Object.defineProperties(valueProvider, {
+      value: {
+        value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      },
+      [VALUE_PROVIDER_MARKER]: {
+        value: true,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+      },
+    });
+    return this.addSingleton(token, valueProvider, options);
   }
 
   useFactory<T>(
@@ -248,16 +267,10 @@ export class ServiceCollection {
     if (typeof factoryOrInstance === "function") {
       return factoryOrInstance as ServiceFactory<T>;
     }
-    if (
-      factoryOrInstance &&
-      typeof factoryOrInstance === "object" &&
-      "value" in factoryOrInstance
-    ) {
-      const disposer =
-        (factoryOrInstance as any).dispose ||
-        (factoryOrInstance as any).close ||
-        (factoryOrInstance as any).destroy;
-      const value = (factoryOrInstance as any).value as T;
+    if (isValueProvider(factoryOrInstance)) {
+      const provider = factoryOrInstance as ValueProvider<T>;
+      const disposer = getValueProviderDisposer(provider);
+      const value = provider.value;
       const fn = () => value;
       (fn as any).__customDispose = disposer as DisposeFn | undefined;
       return fn;
@@ -365,6 +378,48 @@ export class ServiceCollection {
   get tokens(): Token[] {
     return [...this.descriptors.keys()];
   }
+}
+
+function isValueProvider<T>(value: unknown): value is ValueProvider<T> {
+  if (!value || typeof value !== "object" || !("value" in value)) {
+    return false;
+  }
+  if (VALUE_PROVIDER_MARKER in value) return true;
+  if (["dispose", "close", "destroy"].some(
+    (name) =>
+      name in value &&
+      typeof (value as Record<string, unknown>)[name] === "function",
+  )) {
+    return true;
+  }
+  return isDisposableLike((value as ValueProvider<unknown>).value);
+}
+
+function isDisposableLike(value: unknown): boolean {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return false;
+  }
+  const candidate = value as Record<PropertyKey, unknown>;
+  return (
+    ["dispose", "close", "destroy"].some(
+      (name) => typeof candidate[name] === "function",
+    ) ||
+    typeof candidate[(Symbol as any).asyncDispose] === "function" ||
+    typeof candidate[(Symbol as any).dispose] === "function"
+  );
+}
+
+function getValueProviderDisposer<T>(
+  provider: ValueProvider<T>,
+): DisposeFn | undefined {
+  for (const name of ["dispose", "close", "destroy"] as const) {
+    const candidate = provider[name];
+    if (candidate !== undefined && typeof candidate !== "function") {
+      throw new TypeError(`Value provider property ${name} must be a function.`);
+    }
+    if (candidate) return candidate;
+  }
+  return undefined;
 }
 
 function dependencyArray(

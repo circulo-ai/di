@@ -13,10 +13,20 @@ export function getGlobalProvider<TProvider extends ServiceProvider>(
   key: string | symbol = DEFAULT_PROVIDER_KEY,
 ): TProvider {
   const store = globalThis as Record<string | symbol, unknown>;
-  const existing = store[key] as TProvider | undefined;
-  if (existing) return existing;
+  if (Object.prototype.hasOwnProperty.call(store, key)) {
+    const existing = store[key] as TProvider | undefined;
+    if (existing) return existing;
+  }
   const created = factory();
-  store[key] = created;
+  if (created == null) {
+    throw new TypeError("The global provider factory must return a provider.");
+  }
+  Object.defineProperty(store, key, {
+    value: created,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
   return created;
 }
 

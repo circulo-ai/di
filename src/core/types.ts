@@ -26,8 +26,8 @@ export type Token<T = unknown> =
   | AbstractClassConstructor<T>;
 
 export type OptionalToken<T = unknown> = {
-  __optional: true;
-  token: Token<T>;
+  readonly __optional: true;
+  readonly token: Token<T>;
   readonly [OPTIONAL_TOKEN_TYPE]?: T;
 };
 
@@ -132,9 +132,6 @@ export interface ServiceResolver {
     key?: ServiceKey,
   ): Promise<T | undefined>;
 }
-
-// Runtime marker to keep coverage tooling happy; purely informational.
-export const TYPES_MODULE_LOADED = true;
 
 export type ServiceFactoryResult<T> = T | Promise<T>;
 export type ServiceFactory<T> = (
