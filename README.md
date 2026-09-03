@@ -111,6 +111,201 @@ Behavior:
 4. `withScope` creates and disposes a request-like scope even when the callback throws.
 5. Calling `provider.dispose()` is terminal. Further resolution throws `DisposedProviderError`.
 
+## Clean architecture and composition roots
+
+Use DI at the application boundary, where concrete infrastructure is assembled. Keep the domain and application layers independent from `ServiceCollection`, `ServiceProvider`, framework adapters, and the global compatibility `container`.
+
+```text
+HTTP / jobs / CLI
+       │
+       ▼
+Composition root ──────── wires tokens to adapters and chooses lifetimes
+       │
+       ▼
+Application services ──── use cases and orchestration
+       │
+       ▼
+Domain ports ───────────── interfaces and business rules
+       ▲
+       │
+Infrastructure adapters ─ database, queues, email, APIs, files
+```
+
+The dependency direction should point toward stable policy. Define ports next to the domain or application use case, then implement them in infrastructure. The composition root is the only place that should know both sides:
+
+```ts
+// application/user-ports.ts
+export type User = { id: string; email: string };
+
+export interface UserRepository {
+  findByEmail(email: string): Promise<User | undefined>;
+}
+
+export const USER_REPOSITORY = createToken<UserRepository>(
+  "application.user-repository",
+);
+export const REQUEST_CONTEXT = createToken<{ requestId: string }>(
+  "application.request-context",
+);
+
+// application/register-user.ts
+@injectable([USER_REPOSITORY, REQUEST_CONTEXT])
+export class RegisterUser {
+  constructor(
+    private readonly users: UserRepository,
+    private readonly request: { requestId: string },
+  ) {}
+
+  async execute(email: string) {
+    const existing = await this.users.findByEmail(email);
+    return { existing, requestId: this.request.requestId };
+  }
+}
+
+// infrastructure/postgres-user-repository.ts
+export class PostgresUserRepository implements UserRepository {
+  constructor(private readonly database: Database) {}
+
+  async findByEmail(email: string) {
+    return this.database.query<User>(
+      "select id, email from users where email = $1",
+      [email],
+    );
+  }
+}
+
+// bootstrap/create-runtime.ts — the composition root
+export function createRuntime(config: AppConfig) {
+  const collection = new ServiceCollection()
+    .useValue(APP_CONFIG, config)
+    .useFactory(
+      DATABASE,
+      (services) => connectDatabase(services.resolve(APP_CONFIG).databaseUrl),
+      { disposal: "provider", dependencies: [APP_CONFIG] },
+    )
+    .useFactory(
+      USER_REPOSITORY,
+      (services) => new PostgresUserRepository(services.resolve(DATABASE)),
+      { disposal: "provider", dependencies: [DATABASE] },
+    )
+    .useFactory(REQUEST_CONTEXT, () => ({ requestId: crypto.randomUUID() }), {
+      disposal: "scope",
+    })
+    .addScoped(RegisterUser);
+
+  return collection.buildServiceProvider({
+    validateOnBuild: true,
+    requireKeysForMultiple: true,
+  });
+}
+```
+
+The example uses explicit tokens at the boundary and keeps `RegisterUser` unaware of PostgreSQL. For a stateless application service, `addSingleton` is also appropriate; use `addScoped` when the service holds request state or depends on a scoped service.
+
+Resolve a request or job inside one scope and let the provider own process-level resources:
+
+```ts
+const provider = createRuntime(config);
+
+try {
+  // HTTP request, queue message, scheduled job, or CLI command:
+  return await provider.withScope(async (scope) => {
+    return scope.resolve(RegisterUser).execute("user@example.com");
+  });
+} finally {
+  await provider.dispose();
+}
+```
+
+For a long-running server, create the provider once during bootstrap, call `withScope` for each request or job, and dispose it during graceful shutdown. Never create a new provider per request: that defeats singleton reuse and makes resource ownership difficult to reason about.
+
+### Architecture rules that scale
+
+- Keep registration in one composition root per application process or isolated runtime.
+- Inject ports (`UserRepository`) and tokens, not infrastructure classes, into use cases.
+- Keep domain objects constructible without a container. Pass domain dependencies through application services or explicit constructors.
+- Use modules or `registerFeature(collection)` functions to group feature registrations, but apply them only from the composition root.
+- Keep framework-specific resolution at adapters/controllers. A controller may resolve an application service; a domain entity should never resolve from a container.
+- Treat the global Tsyringe-compatible `container` as a migration or integration boundary. Prefer an explicitly built provider for new application code.
+- Name tokens by bounded context (`billing.payment-gateway`, `identity.user-repository`) so collisions are obvious in diagnostics.
+
+## Real-world lifetime and ownership patterns
+
+Choose a lifetime from the state and resource being managed, not from the class name:
+
+| Situation                                                           | Recommended lifetime | Typical examples                                           |
+| ------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------- |
+| Immutable configuration or shared client                            | `Singleton`          | environment config, database pool, HTTP client             |
+| One instance per request/job                                        | `Scoped`             | request context, transaction, authorization snapshot       |
+| Stateless short-lived operation                                     | `Transient`          | command handler, formatter, mapper                         |
+| One instance per `resolve` call graph                               | `ResolutionScoped`   | correlation-aware resolver helpers                         |
+| One instance per container, including child-container compatibility | `ContainerScoped`    | container-local caches and registries                      |
+| Truly process-wide resource                                         | `GlobalSingleton`    | use sparingly; explicit global ownership is harder to test |
+
+A singleton must be safe for concurrent callers and must not retain scoped state. If a singleton needs request data, pass that data into a method or move the dependent service to `Scoped`. `validateGraph()` can detect common captive-dependency mistakes when registrations declare their dependencies.
+
+For disposable resources, make ownership explicit:
+
+```ts
+collection.useFactory(DATABASE, connectDatabase, {
+  disposal: "provider", // close once during application shutdown
+});
+
+collection.addScoped(REQUEST_TRANSACTION, createTransaction, {
+  disposal: "scope", // rollback/close at the end of each request or job
+});
+```
+
+Use `disposal: "none"` only when another system owns the resource. If ownership is unclear, the registration is not ready for production.
+
+### HTTP, workers, and scheduled jobs
+
+The same scope boundary works across runtimes:
+
+```ts
+async function handleHttpRequest(provider: ServiceProvider) {
+  return provider.withScope(async (scope) => {
+    const handler = scope.resolve(UserRequestHandler);
+    return handler.handle();
+  });
+}
+
+async function processMessage(provider: ServiceProvider, message: Message) {
+  return provider.withScope(async (scope) => {
+    const handler = scope.resolve(MessageHandler);
+    return handler.handle(message);
+  });
+}
+```
+
+`withScope` disposes scoped instances on success and failure. For Hono and Next.js, use the package adapters described below; for other frameworks, wrap the framework handler or worker callback with the same pattern.
+
+### Testing a clean architecture
+
+Build the same composition root with test adapters rather than mocking the provider:
+
+```ts
+const testCollection = new ServiceCollection()
+  .useValue(APP_CONFIG, { databaseUrl: "memory://test" })
+  .useValue(USER_REPOSITORY, new InMemoryUserRepository())
+  .useFactory(REQUEST_CONTEXT, () => ({ requestId: "test-request" }), {
+    disposal: "scope",
+  })
+  .addScoped(RegisterUser);
+
+const testProvider = testCollection.buildServiceProvider({
+  validateOnBuild: true,
+});
+
+await testProvider.withScope(async (scope) => {
+  const result = await scope.resolve(RegisterUser).execute("user@example.com");
+  expect(result.requestId).toBe("test-request");
+});
+await testProvider.dispose();
+```
+
+Use a fresh collection/provider per test. Enable `{ allowOverwrite: true }` only for deliberate, local overrides; `useValue` is usually clearer and safer than replacing production descriptors after the provider has been built.
+
 ## Tokens
 
 Tokens are runtime values, so they survive TypeScript compilation and can be used safely in factories, decorators, tests, and adapters.
