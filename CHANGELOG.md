@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.2
+
+### Patch Changes
+
+- 2c59dbf: Expand the README with a table of contents, beginner onboarding guidance, and a detailed .NET DI migration guide.
+
 ## 3.5.1
 
 ### Patch Changes
