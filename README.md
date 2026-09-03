@@ -15,6 +15,44 @@ The package gives you:
 
 The container is deliberately explicit. It does not scan files, infer erased TypeScript types, dynamically import arbitrary modules, or hide service ownership behind global mutable state.
 
+## Table of contents
+
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Beginner guide](#beginner-guide)
+- [Clean architecture and composition roots](#clean-architecture-and-composition-roots)
+  - [Architecture rules that scale](#architecture-rules-that-scale)
+- [Real-world lifetime and ownership patterns](#real-world-lifetime-and-ownership-patterns)
+  - [HTTP, workers, and scheduled jobs](#http-workers-and-scheduled-jobs)
+  - [Testing a clean architecture](#testing-a-clean-architecture)
+- [Tokens](#tokens)
+- [Registration APIs](#registration-apis)
+  - [Explicit helpers](#explicit-helpers)
+  - [Registration options](#registration-options)
+- [Tsyringe-compatible API](#tsyringe-compatible-api)
+  - [Container and providers](#container-and-providers)
+  - [Interception and delayed cycles](#interception-and-delayed-cycles)
+- [Coming from .NET](#coming-from-net)
+- [Binding DSL](#binding-dsl)
+- [Constructor injection without reflection](#constructor-injection-without-reflection)
+- [Helper functions and environment-aware registration](#helper-functions-and-environment-aware-registration)
+- [Resolving services](#resolving-services)
+  - [Multi-bindings and keyed services](#multi-bindings-and-keyed-services)
+- [Lifetimes and ownership](#lifetimes-and-ownership)
+- [Disposal](#disposal)
+- [Validation and diagnostics](#validation-and-diagnostics)
+  - [Beautiful runtime graph reports](#beautiful-runtime-graph-reports)
+- [Modules](#modules)
+- [Typed service locator](#typed-service-locator)
+- [Hono integration](#hono-integration)
+- [Next.js integration](#nextjs-integration)
+- [Testing and overrides](#testing-and-overrides)
+- [Error behavior](#error-behavior)
+- [Production checklist](#production-checklist)
+- [Development and release](#development-and-release)
+- [Migration from earlier versions](#migration-from-earlier-versions)
+- [License](#license)
+
 ## Install
 
 ```bash
@@ -110,6 +148,49 @@ Behavior:
 3. `UserService` is a provider singleton.
 4. `withScope` creates and disposes a request-like scope even when the callback throws.
 5. Calling `provider.dispose()` is terminal. Further resolution throws `DisposedProviderError`.
+
+## Beginner guide
+
+If dependency injection is new to you, start with four concepts:
+
+1. A **token** is the runtime identity of a dependency, such as `LOGGER` or `UserRepository`.
+2. A **registration** tells the collection how to create or provide that dependency.
+3. A **provider** is the built, immutable-at-runtime composition that resolves registrations.
+4. A **scope** is one isolated unit of work, such as an HTTP request or queue message.
+
+You do not need decorators or `reflect-metadata` to get started. The most explicit beginner-friendly pattern is a token, a factory, and a provider:
+
+```ts
+import { ServiceCollection, createToken } from "@circulo-ai/di";
+
+type Mailer = { send(to: string, body: string): Promise<void> };
+const MAILER = createToken<Mailer>("notifications.mailer");
+
+class WelcomeEmail {
+  constructor(private readonly mailer: Mailer) {}
+
+  send(to: string) {
+    return this.mailer.send(to, "Welcome to the product");
+  }
+}
+
+const provider = new ServiceCollection()
+  .useValue(MAILER, {
+    send: async (to, body) => console.log({ to, body }),
+  })
+  .useFactory(
+    WelcomeEmail,
+    (services) => new WelcomeEmail(services.resolve(MAILER)),
+  )
+  .buildServiceProvider({ validateOnBuild: true });
+
+await provider.resolve(WelcomeEmail).send("user@example.com");
+await provider.dispose();
+```
+
+As projects grow, move the registration chain into a bootstrap function and keep business code dependent on interfaces/tokens. Use `useValue` for an already-created value, `useFactory` when creation needs other services, and `useClass` or `addTransient`/`addScoped` when a class should be constructed by DI. Prefer `resolveAsync` whenever a factory or dependency can be asynchronous.
+
+Common beginner mistakes are creating a provider inside every function, resolving dependencies from domain code, using a singleton for request state, and swallowing resolution errors with broad `try/catch`. The [clean architecture](#clean-architecture-and-composition-roots), [lifetime](#real-world-lifetime-and-ownership-patterns), and [production checklist](#production-checklist) sections show the safe progression from a small application to a service with multiple adapters and runtimes.
 
 ## Clean architecture and composition roots
 
@@ -560,6 +641,93 @@ class B {
 ```
 
 Prefer refactoring cycles where possible. Delayed proxies are synchronous and should not be used to hide an async initialization boundary.
+
+## Coming from .NET
+
+If you are coming from `Microsoft.Extensions.DependencyInjection`, the mental model is familiar: register services in an `IServiceCollection`-like composition phase, build a provider, create a scope per unit of work, resolve application services, and dispose the provider during shutdown. The main difference is that TypeScript erases interfaces and generic types at runtime, so contracts must use explicit tokens or classes.
+
+### Core mapping
+
+| .NET DI concept                    | `@circulo-ai/di` equivalent                             | Important difference                                                               |
+| ---------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `IServiceCollection`               | `ServiceCollection`                                     | The collection is the registration builder; use it only during composition.        |
+| `IServiceProvider`                 | `ServiceProvider`                                       | `resolve` is required; `getService`/`tryResolveMissing` are the optional variants. |
+| `AddSingleton`                     | `addSingleton`, `useValue`, or `useFactory`             | A singleton is provider-owned by default when disposable.                          |
+| `AddScoped`                        | `addScoped` or `useFactory(..., { disposal: "scope" })` | A scope must be created explicitly with `withScope` or `createScope`.              |
+| `AddTransient`                     | `addTransient`                                          | Transients are new for each resolution unless you choose another lifetime.         |
+| `IServiceScope` / `CreateScope()`  | `ServiceScope` / `createScope()`                        | Prefer `withScope` so cleanup is guaranteed on every error path.                   |
+| `IEnumerable<T>`                   | `resolveAll(T)`                                         | Use `multiple: true` for each registration.                                        |
+| Keyed services                     | `key` plus `resolve(token, key)` or `resolveMap(token)` | Keys are explicit runtime values, including strings, numbers, and symbols.         |
+| `ImplementationFactory`            | `useFactory` or `bind(...).toFactory(...)`              | Factories can return promises; use the async resolver for async graphs.            |
+| `ValidateOnBuild`                  | `buildServiceProvider({ validateOnBuild: true })`       | Declare hidden factory dependencies with `dependencies` for useful validation.     |
+| `IOptions<T>`                      | A typed token registered with `useValue`                | Validate and freeze configuration before registering it.                           |
+| `IDisposable` / `IAsyncDisposable` | `dispose`, `close`, or `destroy` plus disposal policy   | Ownership is explicit: `scope`, `provider`, `global`, or `none`.                   |
+| `IHostedService`                   | An application-owned startup/shutdown coordinator       | Register its resources and call `provider.dispose()` during graceful shutdown.     |
+
+### A .NET-style registration extension
+
+In .NET, feature packages commonly expose `AddOrders(IServiceCollection services)`. The equivalent is a function that accepts and returns the collection. It should register a feature’s ports and adapters without resolving anything while the module is being composed:
+
+```ts
+export function addOrders(collection: ServiceCollection): ServiceCollection {
+  return collection
+    .useFactory(
+      ORDER_REPOSITORY,
+      (services) => new PostgresOrderRepository(services.resolve(DATABASE)),
+      { dependencies: [DATABASE], disposal: "provider" },
+    )
+    .addScoped(PlaceOrder);
+}
+
+const provider = addOrders(
+  addIdentity(new ServiceCollection().useValue(APP_CONFIG, config)),
+).buildServiceProvider({ validateOnBuild: true });
+```
+
+When using this pattern, keep feature functions deterministic and side-effect free. Database connections, network clients, and worker startup should happen when the registered factory is resolved, not while the module file is imported.
+
+### Configuration and options
+
+Use a token for each cohesive configuration contract instead of injecting a stringly typed environment lookup throughout the application:
+
+```ts
+type PaymentsOptions = {
+  apiUrl: string;
+  timeoutMs: number;
+};
+
+const PAYMENTS_OPTIONS = createToken<PaymentsOptions>("payments.options");
+
+const options = parseAndValidatePaymentsEnv(process.env);
+const collection = new ServiceCollection().useValue(PAYMENTS_OPTIONS, options);
+```
+
+This is the practical equivalent of binding a `.NET` options section. Keep parsing, validation, defaults, and secrets handling outside the domain. Register an immutable value, and inject the typed token into the adapter that needs it.
+
+### Scopes, async work, and disposal
+
+The closest equivalent to ASP.NET Core’s request scope or a scoped background operation is:
+
+```ts
+async function executeRequest(provider: ServiceProvider, input: Input) {
+  return provider.withScope(async (scope) => {
+    return scope.resolve(RequestHandler).handle(input);
+  });
+}
+```
+
+Do not keep a `ServiceScope` in a singleton, global variable, or promise that outlives the request. For workers, create one scope per message or job. For a process-wide database pool or HTTP client, register it as a singleton and dispose the provider once during shutdown. If initialization is asynchronous, call `resolveAsync` at the boundary and let the provider track the resulting resource.
+
+### TypeScript-specific guidance
+
+- Interfaces are erased, so `constructor(repository: UserRepository)` cannot identify a service by itself. Use `@inject(USER_REPOSITORY)`, `@injectable([USER_REPOSITORY])`, or an explicit factory.
+- TypeScript generics are also erased. Register separate runtime tokens for concepts such as `IValidator<User>` and `IValidator<Order>`.
+- Do not recreate .NET’s ambient `IServiceProvider` pattern everywhere. Keep resolution in composition roots, controllers, message handlers, and framework adapters.
+- Use `resolveAll` for plugin pipelines and `key` for a deliberate strategy choice. Use a normal interface/token when there should be exactly one implementation.
+- `GlobalSingleton` is not a default replacement for a .NET singleton. Choose it only when the same instance must be shared across separately built providers.
+- `ServiceCollection` is not a service locator. Build once, pass the provider or scoped resolver only to the boundary that owns the operation, and inject dependencies into the application layer.
+
+The migration path is usually: convert interfaces to tokens, move `Add*` methods into feature registration functions, wrap each request/job in `withScope`, add `validateOnBuild`, then make disposal ownership explicit. The [Tsyringe-compatible API](#tsyringe-compatible-api) is useful when migrating an existing decorator-oriented TypeScript codebase; new code generally benefits from the explicit core API.
 
 ## Binding DSL
 
