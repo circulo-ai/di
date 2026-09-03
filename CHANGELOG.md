@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.1
+
+### Patch Changes
+
+- 196d39c: Expand the package README with clean-architecture guidance, real-world composition patterns, lifetime and ownership guidance, and production testing examples.
+
 ## 3.5.0
 
 ### Minor Changes
