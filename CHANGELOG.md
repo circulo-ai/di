@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.0
+
+### Minor Changes
+
+- 28dfd1d: Add runtime dependency graph devtools with identity-safe trace capture, JSON snapshots, and an offline interactive HTML viewer.
+- 28dfd1d: Add a Tsyringe-compatible API with parameter and lifecycle decorators, provider registration, child containers, resolution interception, delayed circular references, caching factories, and comprehensive migration documentation. The compatibility layer is built on the existing async-safe, explicit Circulo DI engine.
+
 ## 3.4.1
 
 ### Patch Changes
