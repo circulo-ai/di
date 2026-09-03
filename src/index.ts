@@ -1,4 +1,6 @@
 export * from "./binding/module.js";
+export * from "./compat/container.js";
+export * from "./compat/lazy.js";
 export * from "./core/annotations.js";
 export * from "./core/errors.js";
 export * from "./core/lifetime.js";
@@ -7,6 +9,8 @@ export * from "./core/service-provider.js";
 export * from "./core/service-scope.js";
 export * from "./core/tokens.js";
 export * from "./core/types.js";
+export * from "./devtools/graph.js";
+export * from "./devtools/viewer.js";
 export * from "./helpers/env.js";
 export * from "./helpers/helpers.js";
 export * from "./helpers/locator.js";

@@ -164,6 +164,15 @@ export class ServiceScope implements ServiceResolver {
     this.scopedPromises.delete(descriptor);
   }
 
+  /** @internal Clears cached instances while retaining this scope. */
+  clearInstances(): void {
+    this.assertActive();
+    this.scopedInstances.clear();
+    this.scopedPromises.clear();
+    this.ownedInstances.length = 0;
+    this.resolutionOrder.length = 0;
+  }
+
   setInstance(descriptor: ServiceDescriptor, value: unknown): void {
     this.scopedInstances.set(descriptor, value);
     this.scopedPromises.delete(descriptor);

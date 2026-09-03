@@ -12,6 +12,7 @@ import type {
   ServiceDescriptor,
   ServiceFactory,
   ServiceRegistrationOptions,
+  ServiceResolver,
   Token,
   TraceEvent,
   ValueProvider,
@@ -30,6 +31,7 @@ export class ServiceCollection {
   ) {}
 
   private readonly descriptors = new Map<Token, ServiceDescriptor[]>();
+  private readonly builtProviders = new Set<ServiceProvider>();
 
   bind<T>(token: Token<T>) {
     return createBinder(
@@ -181,13 +183,24 @@ export class ServiceCollection {
     );
   }
 
-  build(): ServiceProvider {
-    return new ServiceProvider(
+  build(options?: { fallback?: ServiceResolver }): ServiceProvider {
+    const provider = new ServiceProvider(
       [...this.descriptors.entries()].flatMap(
         ([_, descriptors]) => descriptors,
       ),
-      { trace: this.defaults.trace },
+      { trace: this.defaults.trace, fallback: options?.fallback },
     );
+    this.builtProviders.add(provider);
+    return provider;
+  }
+
+  /** Remove all registrations from this collection and its already-built providers. */
+  reset(): this {
+    this.descriptors.clear();
+    for (const provider of this.builtProviders) {
+      if (!provider.isDisposed()) provider.replaceAllDescriptors([]);
+    }
+    return this;
   }
 
   useValue<T>(
@@ -318,6 +331,14 @@ export class ServiceCollection {
     } else {
       this.descriptors.set(token, [descriptor]);
     }
+    for (const provider of this.builtProviders) {
+      if (!provider.isDisposed()) {
+        provider.replaceTokenDescriptors(
+          token,
+          this.descriptors.get(token) ?? [],
+        );
+      }
+    }
     return this;
   }
 
@@ -349,10 +370,43 @@ export class ServiceCollection {
         return this.addScoped(token, factory, registration);
       case ServiceLifetime.Transient:
         return this.addTransient(token, factory, registration);
+      case ServiceLifetime.ResolutionScoped:
+      case ServiceLifetime.ContainerScoped:
+        return this.addBindingDescriptor(
+          token,
+          factory,
+          lifetime,
+          registration,
+        );
       case ServiceLifetime.Singleton:
       default:
         return this.addSingleton(token, factory, registration);
     }
+  }
+
+  private addBindingDescriptor<T>(
+    token: Token<T>,
+    factory: ServiceFactory<T>,
+    lifetime: ServiceLifetime,
+    options: ServiceRegistrationOptions,
+  ): this {
+    return this.addDescriptor(
+      token,
+      {
+        id: Symbol(),
+        token,
+        lifetime,
+        factory,
+        key: options.key,
+        globalKey: options.globalKey,
+        disposePriority: options.disposePriority ?? 0,
+        registeredAt: new Date(),
+        source: options.source,
+        dependencies: options.dependencies,
+        disposal: options.disposal ?? defaultDisposal(lifetime),
+      },
+      options,
+    );
   }
 
   private captureSource(): string | undefined {
@@ -385,11 +439,13 @@ function isValueProvider<T>(value: unknown): value is ValueProvider<T> {
     return false;
   }
   if (VALUE_PROVIDER_MARKER in value) return true;
-  if (["dispose", "close", "destroy"].some(
-    (name) =>
-      name in value &&
-      typeof (value as Record<string, unknown>)[name] === "function",
-  )) {
+  if (
+    ["dispose", "close", "destroy"].some(
+      (name) =>
+        name in value &&
+        typeof (value as Record<string, unknown>)[name] === "function",
+    )
+  ) {
     return true;
   }
   return isDisposableLike((value as ValueProvider<unknown>).value);
@@ -415,7 +471,9 @@ function getValueProviderDisposer<T>(
   for (const name of ["dispose", "close", "destroy"] as const) {
     const candidate = provider[name];
     if (candidate !== undefined && typeof candidate !== "function") {
-      throw new TypeError(`Value provider property ${name} must be a function.`);
+      throw new TypeError(
+        `Value provider property ${name} must be a function.`,
+      );
     }
     if (candidate) return candidate;
   }
@@ -439,6 +497,8 @@ function defaultDisposal(lifetime: ServiceLifetime) {
       return "scope" as const;
     case ServiceLifetime.GlobalSingleton:
       return "global" as const;
+    case ServiceLifetime.ContainerScoped:
+      return "provider" as const;
     default:
       return "none" as const;
   }

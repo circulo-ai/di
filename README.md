@@ -39,6 +39,9 @@ Framework integrations have explicit subpath entrypoints:
 ```ts
 import { bindToHono } from "@circulo-ai/di/hono";
 import { getGlobalProvider, withRequestScope } from "@circulo-ai/di/next";
+// Optional tree-shakeable compatibility entrypoints:
+import { container } from "@circulo-ai/di/compat";
+import { delay } from "@circulo-ai/di/compat/lazy";
 ```
 
 The root entrypoint still exports the integration functions for backwards compatibility. Hono is an optional peer dependency; install it in applications that use the Hono adapter.
@@ -218,6 +221,150 @@ collection.useFactory(PLUGIN, createPlugin, {
 - `dependencies` declares dependencies for startup graph validation.
 - `disposal` controls who owns cleanup: `none`, `scope`, `provider`, or `global`.
 - `globalKey` gives global-singletons an explicit process-wide identity.
+
+## Tsyringe-compatible API
+
+If your team is familiar with Microsoft’s Tsyringe, the package also exposes a migration-friendly `container` API. It keeps the same core guarantees—explicit runtime tokens, deterministic disposal, async-safe resolution, and no mandatory `reflect-metadata`—while providing familiar names and provider shapes.
+
+```ts
+import {
+  Lifecycle,
+  container,
+  inject,
+  injectAll,
+  injectable,
+  singleton,
+} from "@circulo-ai/di";
+
+const DATABASE = Symbol("Database");
+
+@injectable()
+class UserService {
+  constructor(
+    @inject(DATABASE) private readonly database: Database,
+    @injectAll("UserPlugin", { isOptional: true })
+    private readonly plugins: UserPlugin[],
+  ) {}
+}
+
+@singleton()
+class Metrics {}
+
+container.register(DATABASE, { useValue: createDatabase() });
+container.register(
+  "UserPlugin",
+  { useClass: AuditPlugin },
+  {
+    lifecycle: Lifecycle.Singleton,
+    multiple: true,
+  },
+);
+container.register(UserService, UserService);
+
+const users = container.resolve(UserService);
+```
+
+The decorator metadata is recorded directly on the class. `@inject`, `@injectAll`, `@injectWithTransform`, and `@injectAllWithTransform` work with `experimentalDecorators` and do not require a `reflect-metadata` import. `@injectable()` can use parameter decorators without emitted design metadata; for undecorated class parameters, enable TypeScript design metadata and provide the usual Reflect polyfill if your application wants that convenience.
+
+Supported decorators and equivalents:
+
+| API                                                 | Purpose                                                                                                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `injectable()`                                      | Mark a class as constructible by the container.                                                                                                    |
+| `singleton()` / `@singleton()`                      | Register a class as a provider singleton in the global `container`.                                                                                |
+| `autoInjectable()`                                  | Return a class whose zero-argument construction resolves its parameters from the global `container`; explicit constructor arguments are preserved. |
+| `inject(token, { isOptional })`                     | Inject one token. Optional injection returns `undefined` only when it is unregistered.                                                             |
+| `injectAll(token, { isOptional })`                  | Inject all registrations as an array; optional missing tokens return `[]`.                                                                         |
+| `injectWithTransform(token, transform, ...args)`    | Resolve one value and pass it through a transformer object, transformer class token, or function.                                                  |
+| `injectAllWithTransform(token, transform, ...args)` | Resolve all values and transform the resulting array.                                                                                              |
+| `scoped(Lifecycle.*)`                               | Register a class as `Transient`, `Singleton`, `ResolutionScoped`, or `ContainerScoped`.                                                            |
+| `registry([...])`                                   | Register providers when the decorated module is imported.                                                                                          |
+
+```ts
+class FeatureFlags {
+  enabled(name: string) {
+    return name === "new-checkout";
+  }
+}
+
+class Checkout {
+  constructor(
+    @injectWithTransform(
+      "Flags",
+      (flags: FeatureFlags, name: string) => flags.enabled(name),
+      "new-checkout",
+    )
+    readonly newCheckout: boolean,
+  ) {}
+}
+```
+
+`Lifecycle.ResolutionScoped` reuses one instance during a single dependency graph and starts fresh for the next top-level resolve. `Lifecycle.ContainerScoped` reuses one instance per `Container`, so child containers get independent instances. `Lifecycle.Singleton` is provider-local; use `GlobalSingleton` through the native `ServiceCollection` API only when process-wide/hot-reload reuse is intentional.
+
+### Container and providers
+
+```ts
+import {
+  Lifecycle,
+  container,
+  instanceCachingFactory,
+  instancePerContainerCachingFactory,
+  predicateAwareClassFactory,
+} from "@circulo-ai/di";
+
+container.registerType("PrimaryLogger", "Logger");
+container.registerInstance("BuildInfo", { version: "1.0.0" });
+container.registerSingleton("Database", Database);
+container.register("LazyCache", {
+  useFactory: instanceCachingFactory((c) => c.resolve(Cache)),
+});
+container.register("PerContainerCache", {
+  useFactory: instancePerContainerCachingFactory((c) => c.resolve(Cache)),
+});
+container.register("HttpClient", {
+  useFactory: predicateAwareClassFactory(
+    (c) => c.resolve("Config").https,
+    HttpsClient,
+    HttpClient,
+  ),
+});
+
+const allPlugins = container.resolveAll<UserPlugin>("UserPlugin");
+const child = container.createChildContainer();
+child.register("Config", { useValue: { https: false } });
+child.isRegistered("Logger", true); // includes parent registrations
+```
+
+`register` accepts class, value, factory, and token providers. Factory providers receive a contextual container, so resolution-scoped lifetimes remain correct inside nested `resolve` calls. `reset()` clears registrations and interceptors; `clearInstances()` keeps registrations but recreates cached singleton/container-scoped instances. `dispose()` is terminal and disposes instances owned by that container.
+
+### Interception and delayed cycles
+
+```ts
+container.beforeResolution(
+  "Database",
+  (_token, type) => {
+    console.debug("resolving", type);
+  },
+  { frequency: "Once" },
+);
+
+container.afterResolution("Database", (_token, database) => {
+  database.healthcheck();
+});
+```
+
+For a cycle that cannot be refactored immediately, use a delayed constructor. The returned proxy resolves the target only when first accessed:
+
+```ts
+class A {
+  constructor(@inject(delay(() => B)) readonly b: B) {}
+}
+class B {
+  constructor(@inject(delay(() => A)) readonly a: A) {}
+}
+```
+
+Prefer refactoring cycles where possible. Delayed proxies are synchronous and should not be used to hide an async initialization boundary.
 
 ## Binding DSL
 
@@ -546,6 +693,45 @@ console.log(provider.getDescriptors(App));
 ```
 
 Descriptors include token, lifetime, key, source, registration time, ownership, and priority. Tracing is useful in development; avoid logging secrets or enabling verbose tracing on hot production paths without a sampling policy.
+
+### Beautiful runtime graph reports
+
+The development-only graph recorder turns real resolution activity into an identity-safe snapshot. It captures dynamic factory lookups, keyed services, lifetimes, resolution counts, async usage, roots, and cycles. Because it observes runtime behavior, it complements (rather than replaces) `validateGraph()` and declared `dependencies`.
+
+```ts
+import { ServiceCollection } from "@circulo-ai/di";
+import {
+  RuntimeDependencyGraph,
+  writeDependencyGraphReport,
+} from "@circulo-ai/di/devtools";
+
+const provider = new ServiceCollection()
+  .addSingleton(CONFIG, config)
+  .addTransient(
+    UserRepository,
+    (services) => new UserRepository(services.resolve(CONFIG)),
+  )
+  .addTransient(
+    UserService,
+    (services) => new UserService(services.resolve(UserRepository)),
+  )
+  .build();
+
+const graph = new RuntimeDependencyGraph();
+const stopRecording = graph.attach(provider);
+
+try {
+  await provider.resolveAsync(UserService);
+  await writeDependencyGraphReport("./di-runtime.html", graph.snapshot(), {
+    title: "Circulo DI · runtime graph",
+  });
+} finally {
+  stopRecording();
+  await provider.dispose();
+}
+```
+
+Open `di-runtime.html` locally. The report is fully offline and includes search, hot-path filtering, pan/zoom, node inspection, lifetime and async badges, resolution counts, dependent/dependency lists, and cycle highlighting. For tooling that does not write files, use `graph.snapshot()` with `renderDependencyGraphHtml(snapshot)` from the package root. The graph contains service metadata only—never resolved instance values.
 
 ## Modules
 

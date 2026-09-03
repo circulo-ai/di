@@ -10,7 +10,12 @@ export function optional<T>(token: Token<T>): OptionalToken<T> {
   if (
     typeof token !== "string" &&
     typeof token !== "symbol" &&
-    typeof token !== "function"
+    typeof token !== "function" &&
+    !(
+      token &&
+      typeof token === "object" &&
+      (token as { __delayed?: unknown }).__delayed === true
+    )
   ) {
     throw new TypeError("An optional token must wrap a valid service token.");
   }

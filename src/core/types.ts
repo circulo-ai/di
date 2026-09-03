@@ -1,5 +1,11 @@
 import type { ServiceLifetime } from "./lifetime.js";
 
+export interface DelayedToken<T = unknown> {
+  readonly __delayed: true;
+  getConstructor(): AbstractClassConstructor<T>;
+  createProxy(resolve: (constructor: AbstractClassConstructor<T>) => T): T;
+}
+
 declare const INJECTION_TOKEN_TYPE: unique symbol;
 declare const OPTIONAL_TOKEN_TYPE: unique symbol;
 
@@ -23,7 +29,8 @@ export type Token<T = unknown> =
   | string
   | symbol
   | InjectionToken<T>
-  | AbstractClassConstructor<T>;
+  | AbstractClassConstructor<T>
+  | DelayedToken<T>;
 
 export type OptionalToken<T = unknown> = {
   readonly __optional: true;
@@ -39,7 +46,9 @@ export type BindingScope =
   | "global"
   | "globalSingleton"
   | "scoped"
-  | "transient";
+  | "transient"
+  | "resolutionScoped"
+  | "containerScoped";
 
 export type BindingOptions = {
   /**
@@ -131,6 +140,8 @@ export interface ServiceResolver {
     token: TokenLike<T>,
     key?: ServiceKey,
   ): Promise<T | undefined>;
+  /** Optional registration lookup supported by full providers/containers. */
+  isRegistered?(token: Token, recursive?: boolean): boolean;
 }
 
 export type ServiceFactoryResult<T> = T | Promise<T>;
@@ -157,5 +168,28 @@ export type TraceEvent = {
   key?: ServiceKey;
   lifetime: ServiceLifetime;
   path: string[];
+  /** Identity-preserving frames for tooling that needs to build a graph. */
+  pathEntries?: Array<{ token: Token; key?: ServiceKey }>;
   async: boolean;
+};
+
+export type ResolutionType = "Single" | "All";
+export type InterceptorFrequency = "Always" | "Once";
+/** Tsyringe-compatible name for interceptor frequency. */
+export type Frequency = InterceptorFrequency;
+export type InterceptorOptions = {
+  frequency?: InterceptorFrequency;
+};
+export type PreResolutionInterceptorCallback<T = unknown> = (
+  token: Token<T>,
+  resolutionType: ResolutionType,
+) => void;
+export type PostResolutionInterceptorCallback<T = unknown> = (
+  token: Token<T>,
+  result: T | T[],
+  resolutionType: ResolutionType,
+) => void;
+
+export type Transform<TInput, TOutput> = {
+  transform(input: TInput, ...args: unknown[]): TOutput;
 };

@@ -31,6 +31,10 @@ export function scopeToLifetime(
       return ServiceLifetime.Scoped;
     case "transient":
       return ServiceLifetime.Transient;
+    case "resolutionScoped":
+      return ServiceLifetime.ResolutionScoped;
+    case "containerScoped":
+      return ServiceLifetime.ContainerScoped;
     default:
       return undefined;
   }

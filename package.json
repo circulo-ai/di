@@ -51,6 +51,21 @@
       "types": "./dist/next.d.ts",
       "import": "./dist/next.js",
       "default": "./dist/next.js"
+    },
+    "./compat": {
+      "types": "./dist/compat/container.d.ts",
+      "import": "./dist/compat/container.js",
+      "default": "./dist/compat/container.js"
+    },
+    "./compat/lazy": {
+      "types": "./dist/compat/lazy.d.ts",
+      "import": "./dist/compat/lazy.js",
+      "default": "./dist/compat/lazy.js"
+    },
+    "./devtools": {
+      "types": "./dist/devtools/index.d.ts",
+      "import": "./dist/devtools/index.js",
+      "default": "./dist/devtools/index.js"
     }
   },
   "publishConfig": {
