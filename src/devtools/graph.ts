@@ -1,4 +1,4 @@
-import { ServiceLifetime } from "../core/lifetime.js";
+import type { ServiceLifetime } from "../core/lifetime.js";
 import type { ServiceProvider } from "../core/service-provider.js";
 import type { ServiceKey, Token, TraceEvent } from "../core/types.js";
 

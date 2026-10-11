@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { Env, Input } from "hono/types";
-import { ServiceProvider } from "../core/service-provider.js";
+import type { ServiceProvider } from "../core/service-provider.js";
 import type { ServiceScope } from "../core/service-scope.js";
 import type { Token } from "../core/types.js";
 import type { ResolvedServices, TokenTree } from "../helpers/locator.js";

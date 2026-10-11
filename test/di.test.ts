@@ -9,7 +9,7 @@ import {
   ScopeResolutionError,
   ServiceCollection,
   ServiceLifetime,
-  ServiceScope,
+  type ServiceScope,
   annotate,
   bindToHono,
   createContainerMiddleware,

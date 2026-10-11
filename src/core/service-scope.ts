@@ -3,7 +3,7 @@ import { ServiceLifetime } from "./lifetime.js";
 import {
   disposeFunctions,
   disposeMany,
-  ServiceProvider,
+  type ServiceProvider,
 } from "./service-provider.js";
 import type {
   DisposeFn,
