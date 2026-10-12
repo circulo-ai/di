@@ -67,7 +67,6 @@ function makeRegister(
       return services.addGlobalSingleton.bind(services);
     case ServiceLifetime.Scoped:
       return services.addScoped.bind(services);
-    case ServiceLifetime.Transient:
     default:
       return services.addTransient.bind(services);
   }

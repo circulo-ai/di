@@ -378,7 +378,6 @@ export class ServiceCollection {
           lifetime,
           registration,
         );
-      case ServiceLifetime.Singleton:
       default:
         return this.addSingleton(token, factory, registration);
     }

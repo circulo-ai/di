@@ -352,7 +352,7 @@ export class ServiceProvider implements ServiceResolver {
           `resolveMap requires keyed registrations for token ${tokenLabel(token)}`,
         );
       }
-      if (Object.prototype.hasOwnProperty.call(map, d.key)) {
+      if (Object.hasOwn(map, d.key)) {
         throw new Error(
           `Duplicate key ${keyLabel(d.key)} for token ${tokenLabel(token)}`,
         );
@@ -432,7 +432,7 @@ export class ServiceProvider implements ServiceResolver {
 
     const map: Record<ServiceKey, T> = {} as Record<ServiceKey, T>;
     for (const [key, value] of entries) {
-      if (Object.prototype.hasOwnProperty.call(map, key)) {
+      if (Object.hasOwn(map, key)) {
         throw new Error(
           `Duplicate key ${keyLabel(key)} for token ${tokenLabel(token)}`,
         );
@@ -961,7 +961,6 @@ export class ServiceProvider implements ServiceResolver {
           scope.clearPending(descriptor);
         }
       }
-      case ServiceLifetime.Transient:
       default: {
         const created = await this.materializeAsync(descriptor, scope, stack);
         this.trackOwnedTransient(descriptor, created, scope);
@@ -1065,7 +1064,6 @@ export class ServiceProvider implements ServiceResolver {
         }
         return created;
       }
-      case ServiceLifetime.Transient:
       default: {
         const created = this.materializeSync(descriptor, scope, stack);
         this.trackOwnedTransient(descriptor, created, scope);

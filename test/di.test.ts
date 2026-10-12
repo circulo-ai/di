@@ -506,7 +506,7 @@ describe("Hono helpers", () => {
   it("attaches scope per request and resolves/tries correctly", async () => {
     const dispose = vi.fn();
     const services = new ServiceCollection()
-      .addScoped("RequestId", () => "req-" + random())
+      .addScoped("RequestId", () => `req-${random()}`)
       .addTransient("Transient", () => ({ n: random() }))
       .addScoped("Disposable", () => ({ dispose }));
     const provider = services.build();
@@ -1716,9 +1716,7 @@ describe("production lifecycle guards", () => {
       .build();
 
     const values = provider.resolveMap<string>("Value");
-    expect(Object.prototype.hasOwnProperty.call(values, "__proto__")).toBe(
-      true,
-    );
+    expect(Object.hasOwn(values, "__proto__")).toBe(true);
     expect(values.__proto__).toBe("safe");
     expect(Object.getPrototypeOf(values)).toBe(Object.prototype);
   });
@@ -1804,7 +1802,7 @@ describe("production hardening regressions", () => {
     const resolved = getGlobalProvider(() => provider, key);
 
     expect(resolved).toBe(provider);
-    expect(Object.prototype.hasOwnProperty.call(globalThis, key)).toBe(true);
+    expect(Object.hasOwn(globalThis, key)).toBe(true);
     delete (globalThis as any)[key];
   });
 

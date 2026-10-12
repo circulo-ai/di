@@ -83,7 +83,7 @@ export class Container implements DependencyContainer {
   private readonly services: ServiceCollection;
   private readonly provider;
 
-  constructor(private readonly parent?: Container) {
+  constructor(readonly parent?: Container) {
     this.services = new ServiceCollection({ allowOverwrite: true });
     this.provider = this.services.build({ fallback: parent });
   }
@@ -427,7 +427,6 @@ function lifecycleToLifetime(lifecycle?: Lifecycle): ServiceLifetime {
       return ServiceLifetime.ResolutionScoped;
     case Lifecycle.ContainerScoped:
       return ServiceLifetime.ContainerScoped;
-    case Lifecycle.Transient:
     default:
       return ServiceLifetime.Transient;
   }

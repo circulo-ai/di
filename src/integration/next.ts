@@ -13,7 +13,7 @@ export function getGlobalProvider<TProvider extends ServiceProvider>(
   key: string | symbol = DEFAULT_PROVIDER_KEY,
 ): TProvider {
   const store = globalThis as Record<string | symbol, unknown>;
-  if (Object.prototype.hasOwnProperty.call(store, key)) {
+  if (Object.hasOwn(store, key)) {
     const existing = store[key] as TProvider | undefined;
     if (existing) return existing;
   }

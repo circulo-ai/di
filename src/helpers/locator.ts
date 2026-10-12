@@ -91,7 +91,7 @@ export function createServiceLocator<T extends TokenTree>(
     const proxy = new Proxy({} as ResolvedServices<TNode>, {
       get(_target, property: string | symbol) {
         if (typeof property !== "string") return undefined;
-        if (!Object.prototype.hasOwnProperty.call(tree, property)) {
+        if (!Object.hasOwn(tree, property)) {
           if (strict) throw missingTokenError(property);
           return undefined;
         }
