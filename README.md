@@ -1057,7 +1057,7 @@ console.log(provider.getDescriptors(App));
 
 Descriptors include token, lifetime, key, source, registration time, ownership, and priority. Tracing is useful in development; avoid logging secrets or enabling verbose tracing on hot production paths without a sampling policy.
 
-### Beautiful runtime graph reports
+### Runtime dependency graph reports
 
 The development-only graph recorder turns real resolution activity into an identity-safe snapshot. It captures dynamic factory lookups, keyed services, lifetimes, resolution counts, async usage, roots, and cycles. Because it observes runtime behavior, it complements (rather than replaces) `validateGraph()` and declared `dependencies`.
 
